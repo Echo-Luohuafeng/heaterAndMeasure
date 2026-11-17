@@ -1,4 +1,11 @@
 menu "Heater and resistance measurement"
+    config HEATER_CONTROL_LEASE_MS
+        int "SET/PING control lease (milliseconds)"
+        range 1000 30000
+        default 5000
+        help
+            A controlling host sends PING every second. Lease expiry cancels
+            heating while measurements continue. PING never starts heating.
     config HEATER_MAX_ISR_LATENCY_US
         int "Maximum accepted phase interrupt lateness (us)"
         range 10 80

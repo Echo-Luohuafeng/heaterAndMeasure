@@ -27,7 +27,7 @@ enum {
     HEATER_FAULT_ADC_TIMEOUT = 1U << 1,
     HEATER_FAULT_SPI = 1U << 2,
     HEATER_FAULT_SAMPLE = 1U << 3,
-    // Bit 4 is reserved for the retired command-timeout fault.
+    HEATER_FAULT_HOST_TIMEOUT = 1U << 4,
     HEATER_FAULT_STOPPED = 1U << 5,
     HEATER_FAULT_PWM = 1U << 6,
 };

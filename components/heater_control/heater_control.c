@@ -9,6 +9,8 @@
 #include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_intr_alloc.h"
+#include "esp_timer.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "heater_board.h"
 #include "sdkconfig.h"
@@ -20,10 +22,10 @@
 
 #define CONTROL_TASK_STACK_BYTES 6144
 #define CONTROL_TASK_PRIORITY 20
-#define ADC_START_US 17000U
-// Four software-CS START commands exceed 100 us on the S3 at 160 MHz.
-// Complete them by 17.2 ms, leaving 1.85 ms before hardware measurement cutoff.
-#define ADC_START_DEADLINE_US 17200U
+#define ADC_START_US 16800U
+// Wi-Fi/PSRAM cache variation pushes four START commands just beyond 200 us
+// even at 240 MHz. Complete by 17.10 ms; the 19.05 ms cutoff stays absolute.
+#define ADC_START_DEADLINE_US (ADC_START_US + 300U)
 #define MEASURE_OFF_US 19050U
 #define ADC_READ_GUARD_US 100U
 #define ADC_EARLIEST_READY_US 1200U
@@ -34,6 +36,7 @@
 #define EVENT_ADC_READY (1U << 2)
 #define EVENT_FRAME_DONE (1U << 3)
 #define EVENT_ABORT (1U << 4)
+#define EVENT_PAUSE (1U << 5)
 
 typedef enum {
     PHASE_START,
@@ -87,6 +90,15 @@ typedef struct {
     uint32_t faults;
     uint32_t deadline_misses;
     uint32_t telemetry_drops;
+    bool maintenance;
+    bool paused;
+    bool board_ready;
+    bool host_timeout;
+    uint64_t lease_deadline_us;
+    int64_t pause_start_us;
+    SemaphoreHandle_t pause_ack;
+    SemaphoreHandle_t lifecycle;
+    heater_timing_stats_t timing;
 } control_t;
 
 static control_t s_control = {.lock = portMUX_INITIALIZER_UNLOCKED};
@@ -138,6 +150,11 @@ static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_ev
     uint32_t notification = 0;
     BaseType_t woken = pdFALSE;
     portENTER_CRITICAL_ISR(&s_control.lock);
+    if (s_control.maintenance) {
+        heater_board_requests_off();
+        portEXIT_CRITICAL_ISR(&s_control.lock);
+        return false;
+    }
     const phase_t phase = s_control.next_phase;
     s_control.phase = phase;
     if (event->count_value > event->alarm_value + CONFIG_HEATER_MAX_ISR_LATENCY_US) {
@@ -161,7 +178,13 @@ static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_ev
             ++s_control.sequence;
             s_control.started_mask = 0;
             s_control.ready_mask = 0;
-            s_control.faults = s_control.pwm_failed ? HEATER_FAULT_PWM : 0;
+            if (s_control.command_active && event->count_value >= s_control.lease_deadline_us) {
+                s_control.command_active = false;
+                s_control.host_timeout = true;
+                memset(s_control.desired, 0, sizeof(s_control.desired));
+            }
+            s_control.faults = (s_control.pwm_failed ? HEATER_FAULT_PWM : 0) |
+                (s_control.host_timeout ? HEATER_FAULT_HOST_TIMEOUT : 0);
             const bool previous_done = s_control.healthy_sequence == s_control.sequence - 1;
             if (!previous_done) {
                 s_control.faults |= HEATER_FAULT_TIMING;
@@ -288,7 +311,7 @@ static void IRAM_ATTR adc_ready(void *arg)
     }
     bool notify = false;
     portENTER_CRITICAL_ISR(&s_control.lock);
-    if (s_control.phase == PHASE_CONVERT && (s_control.started_mask & bit) &&
+    if (!s_control.maintenance && s_control.phase == PHASE_CONVERT && (s_control.started_mask & bit) &&
         now >= s_control.adc_start_us[channel] + ADC_EARLIEST_READY_US &&
         now < s_control.cycle_start_us + MEASURE_OFF_US) {
         // Latch each edge: shared SPI clocks can clear other devices' DRDY.
@@ -314,7 +337,7 @@ static void start_conversion(uint32_t sequence)
             return;
         }
         portENTER_CRITICAL(&s_control.lock);
-        const bool on_time = s_control.sequence == sequence && s_control.phase == PHASE_CONVERT &&
+        const bool on_time = !s_control.maintenance && s_control.sequence == sequence && s_control.phase == PHASE_CONVERT &&
             !s_control.pwm_failed && now <= s_control.cycle_start_us + ADC_START_DEADLINE_US;
         if (on_time) {
             s_control.adc_start_us[i] = now;
@@ -322,6 +345,11 @@ static void start_conversion(uint32_t sequence)
         }
         portEXIT_CRITICAL(&s_control.lock);
         if (!on_time) {
+            portENTER_CRITICAL(&s_control.lock);
+            ++s_control.timing.adc_start_misses;
+            const uint32_t offset = now > s_control.cycle_start_us ? (uint32_t)(now - s_control.cycle_start_us) : 0;
+            if (offset > s_control.timing.adc_start_max_offset_us) s_control.timing.adc_start_max_offset_us = offset;
+            portEXIT_CRITICAL(&s_control.lock);
             add_fault(sequence, HEATER_FAULT_TIMING);
             return;
         }
@@ -337,9 +365,14 @@ static void start_conversion(uint32_t sequence)
             return;
         }
         portENTER_CRITICAL(&s_control.lock);
-        const bool completed_on_time = s_control.sequence == sequence &&
+        const bool completed_on_time = !s_control.maintenance && s_control.sequence == sequence &&
             s_control.phase == PHASE_CONVERT &&
             now <= s_control.cycle_start_us + ADC_START_DEADLINE_US;
+        if (s_control.sequence == sequence) {
+            const uint32_t offset = (uint32_t)(now - s_control.cycle_start_us);
+            if (offset > s_control.timing.adc_start_max_offset_us) s_control.timing.adc_start_max_offset_us = offset;
+            if (!completed_on_time) ++s_control.timing.adc_start_misses;
+        }
         if (!completed_on_time && s_control.sequence == sequence) {
             s_control.started_mask &= ~(1U << i);
         }
@@ -365,6 +398,7 @@ static void read_ready(heater_telemetry_t *frame, uint8_t *read_mask)
         uint64_t now;
         if (gptimer_get_raw_count(s_control.timer, &now) != ESP_OK ||
             now + ADC_READ_GUARD_US >= frame->cycle_start_us + MEASURE_OFF_US) {
+            portENTER_CRITICAL(&s_control.lock); ++s_control.timing.adc_read_misses; portEXIT_CRITICAL(&s_control.lock);
             add_fault(frame->sequence, HEATER_FAULT_TIMING);
             return;
         }
@@ -376,6 +410,7 @@ static void read_ready(heater_telemetry_t *frame, uint8_t *read_mask)
         }
         if (gptimer_get_raw_count(s_control.timer, &now) != ESP_OK ||
             now >= frame->cycle_start_us + MEASURE_OFF_US) {
+            portENTER_CRITICAL(&s_control.lock); ++s_control.timing.adc_read_misses; portEXIT_CRITICAL(&s_control.lock);
             add_fault(frame->sequence, HEATER_FAULT_TIMING);
             continue;
         }
@@ -433,6 +468,22 @@ static void control_task(void *arg)
     for (;;) {
         uint32_t events;
         xTaskNotifyWait(0, UINT32_MAX, &events, portMAX_DELAY);
+        portENTER_CRITICAL(&s_control.lock);
+        const bool maintenance = s_control.maintenance;
+        portEXIT_CRITICAL(&s_control.lock);
+        if (maintenance) {
+            if (events & EVENT_PAUSE) {
+                const esp_err_t stopped = gptimer_stop(s_control.timer);
+                portENTER_CRITICAL(&s_control.lock);
+                heater_board_requests_off();
+                const bool low = heater_board_pwm_low();
+                s_control.paused = stopped == ESP_OK && low;
+                s_control.pause_start_us = esp_timer_get_time();
+                portEXIT_CRITICAL(&s_control.lock);
+                xSemaphoreGive(s_control.pause_ack);
+            }
+            continue;
+        }
         const snapshot_t current = snapshot();
         if (frame.sequence != current.sequence) {
             frame = (heater_telemetry_t) {
@@ -466,7 +517,13 @@ esp_err_t heater_control_init(QueueHandle_t outbound)
         return ESP_ERR_INVALID_ARG;
     }
     s_control.outbound = outbound;
+    s_control.pause_ack = xSemaphoreCreateBinary();
+    s_control.lifecycle = xSemaphoreCreateMutex();
+    if (s_control.pause_ack == NULL || s_control.lifecycle == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
     ESP_RETURN_ON_ERROR(heater_board_init(), TAG, "Board initialization failed");
+    s_control.board_ready = true;
     const esp_err_t adc_result = ads1220_init();
     if (adc_result != ESP_OK) {
         heater_board_requests_off();
@@ -503,8 +560,9 @@ esp_err_t heater_control_start(void)
     if (s_control.timer == NULL || s_control.task != NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xTaskCreate(control_task, "heater_cycle", CONTROL_TASK_STACK_BYTES, NULL,
-                    CONTROL_TASK_PRIORITY, &s_control.task) != pdPASS) {
+    // Bootstrap and IRQ allocation also run on Core 1 (see app_main).
+    if (xTaskCreatePinnedToCore(control_task, "heater_cycle", CONTROL_TASK_STACK_BYTES, NULL,
+                    CONTROL_TASK_PRIORITY, &s_control.task, 1) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     s_control.next_phase = PHASE_START;
@@ -519,8 +577,13 @@ esp_err_t heater_control_start(void)
 
 esp_err_t heater_control_submit(const heater_command_t *command)
 {
-    if (command == NULL || s_control.task == NULL) {
+    if (command == NULL) {
         return ESP_ERR_INVALID_STATE;
+    }
+    if (s_control.task == NULL) {
+        if (command->kind != HEATER_COMMAND_STOP || !s_control.board_ready) return ESP_ERR_INVALID_STATE;
+        heater_board_requests_off();
+        return heater_board_pwm_low() ? ESP_OK : ESP_FAIL;
     }
     if (command->kind == HEATER_COMMAND_SET) {
         for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
@@ -531,20 +594,135 @@ esp_err_t heater_control_submit(const heater_command_t *command)
     } else if (command->kind != HEATER_COMMAND_STOP && command->kind != HEATER_COMMAND_PING) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (command->kind == HEATER_COMMAND_PING) {
-        return ESP_OK;
-    }
+    uint64_t now;
+    if (gptimer_get_raw_count(s_control.timer, &now) != ESP_OK) return ESP_FAIL;
     portENTER_CRITICAL(&s_control.lock);
+    if (s_control.maintenance && command->kind != HEATER_COMMAND_STOP) {
+        portEXIT_CRITICAL(&s_control.lock);
+        return ESP_ERR_INVALID_STATE;
+    }
     if (command->kind == HEATER_COMMAND_STOP) {
         s_control.command_active = false;
         s_control.bootstrap_ready = false;
         memset(s_control.desired, 0, sizeof(s_control.desired));
         heater_board_heat_request(false);
+        heater_board_pwm_low();
+        s_control.host_timeout = false;
         s_control.faults |= HEATER_FAULT_STOPPED;
     } else if (command->kind == HEATER_COMMAND_SET) {
         memcpy(s_control.desired, command->duty, sizeof(s_control.desired));
         s_control.command_active = true;
+        s_control.host_timeout = false;
+        s_control.lease_deadline_us = now + (uint64_t)CONFIG_HEATER_CONTROL_LEASE_MS * 1000;
+    } else if (s_control.command_active) {
+        s_control.lease_deadline_us = now + (uint64_t)CONFIG_HEATER_CONTROL_LEASE_MS * 1000;
     }
     portEXIT_CRITICAL(&s_control.lock);
     return ESP_OK;
+}
+
+bool heater_control_is_paused(void)
+{
+    portENTER_CRITICAL(&s_control.lock);
+    const bool paused = s_control.paused;
+    portEXIT_CRITICAL(&s_control.lock);
+    return paused;
+}
+
+heater_timing_stats_t heater_control_timing_stats(void)
+{
+    portENTER_CRITICAL(&s_control.lock);
+    const heater_timing_stats_t result = s_control.timing;
+    portEXIT_CRITICAL(&s_control.lock);
+    return result;
+}
+
+bool heater_control_is_maintenance(void)
+{
+    portENTER_CRITICAL(&s_control.lock);
+    const bool paused = s_control.maintenance;
+    portEXIT_CRITICAL(&s_control.lock);
+    return paused;
+}
+
+esp_err_t heater_control_pause(TickType_t timeout)
+{
+    if (s_control.lifecycle == NULL) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_control.lifecycle, timeout) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (s_control.task == NULL) {
+        // Initialization completed without starting a control task (e.g. ADC
+        // register verification failed). No SPI transfer or timer can be active.
+        portENTER_CRITICAL(&s_control.lock);
+        const bool ready = s_control.board_ready;
+        if (ready) {
+            s_control.maintenance = true;
+            s_control.command_active = false;
+            heater_board_requests_off();
+            s_control.paused = heater_board_pwm_low();
+        }
+        const bool safe = ready && s_control.paused;
+        portEXIT_CRITICAL(&s_control.lock);
+        xSemaphoreGive(s_control.lifecycle);
+        return safe ? ESP_OK : ESP_ERR_INVALID_STATE;
+    }
+    portENTER_CRITICAL(&s_control.lock);
+    const bool paused = s_control.paused;
+    s_control.maintenance = true;
+    s_control.command_active = false;
+    s_control.bootstrap_ready = false;
+    s_control.started_mask = s_control.ready_mask = s_control.healthy_mask = 0;
+    memset(s_control.desired, 0, sizeof(s_control.desired));
+    memset(s_control.applied, 0, sizeof(s_control.applied));
+    heater_board_requests_off();
+    heater_board_pwm_low();
+    portEXIT_CRITICAL(&s_control.lock);
+    esp_err_t result = ESP_OK;
+    if (!paused) {
+        xSemaphoreTake(s_control.pause_ack, 0); // discard a previous failed acknowledgement
+        xTaskNotify(s_control.task, EVENT_PAUSE, eSetBits);
+        if (xSemaphoreTake(s_control.pause_ack, timeout) != pdTRUE || !s_control.paused) {
+            result = ESP_ERR_TIMEOUT;
+        }
+    }
+    xSemaphoreGive(s_control.lifecycle);
+    return result;
+}
+
+esp_err_t heater_control_resume(void)
+{
+    if (s_control.lifecycle == NULL || s_control.task == NULL || s_control.timer == NULL)
+        return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_control.lifecycle, pdMS_TO_TICKS(1000)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    esp_err_t result = ESP_ERR_INVALID_STATE;
+    if (s_control.paused) {
+        uint64_t now;
+        result = gptimer_get_raw_count(s_control.timer, &now);
+        if (result == ESP_OK) {
+            now += (uint64_t)(esp_timer_get_time() - s_control.pause_start_us);
+            result = gptimer_set_raw_count(s_control.timer, now);
+        }
+        if (result == ESP_OK) {
+            s_control.next_cycle_start_us = (now / HEATER_PERIOD_US + 2) * HEATER_PERIOD_US;
+            s_control.next_phase = PHASE_START;
+            s_control.healthy_sequence = s_control.sequence;
+            s_control.alarm.alarm_count = s_control.next_cycle_start_us;
+            result = gptimer_set_alarm_action(s_control.timer, &s_control.alarm);
+        }
+        if (result == ESP_OK) {
+            portENTER_CRITICAL(&s_control.lock);
+            s_control.maintenance = false;
+            s_control.paused = false;
+            portEXIT_CRITICAL(&s_control.lock);
+            result = gptimer_start(s_control.timer);
+            if (result != ESP_OK) {
+                portENTER_CRITICAL(&s_control.lock);
+                s_control.maintenance = true;
+                s_control.paused = true;
+                heater_board_requests_off();
+                portEXIT_CRITICAL(&s_control.lock);
+            }
+        }
+    }
+    xSemaphoreGive(s_control.lifecycle);
+    return result;
 }

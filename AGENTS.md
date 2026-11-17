@@ -3,7 +3,9 @@
 ## 环境与工程
 
 - 目标为 `esp32s3`；使用 VS Code ESP-IDF 扩展和 Linux Dev Container，固定 ESP-IDF v6.1.1（`/opt/esp/idf`）、用户 `vscode`。终端环境未加载时执行 `. /opt/esp/idf/export.sh`。
-- Flash 为 16 MB，日志使用内置 USB Serial/JTAG。芯片报告 8 MB PSRAM，暂未启用，使用前需配置并验证。
+- Flash 为 16 MB，日志及 STOP 救援命令使用内置 USB Serial/JTAG，正常通信使用 Wi-Fi HTTP/WebSocket。PSRAM 已实板确认 8 MB、Octal 80 MHz 并通过启动测试；使用 4 MiB 历史缓存。CPU 使用 240 MHz、性能优化编译，ADC SPI 为 2 MHz 且由一个设备句柄独占。
+- 已完成 Wi-Fi/OTA/启动失败回滚及四路最大占空比 2 的实板测试；后续变更仍需检查采样时序、无效帧、任务栈余量及输出关断。硬件精度校准和示波器验证另行进行。
+- 分区布局见 `partitions.csv`，使用两个 4 MiB 应用分区及 `otadata`。首次迁移需 USB 完整烧录；日常 OTA 仅上传应用 `.bin`。OTA、NVS 配网保存及启动版本确认写 Flash 前，必须获得控制任务的暂停确认。
 - 入口为 `main/app_main.c`；业务模块放在 `components/<组件名>/`，组件内包含 `CMakeLists.txt` 和公共头文件目录 `include/`。
 - 根工程启用 `MINIMAL_BUILD`；通过 `idf_component_register` 声明源文件、头文件目录及依赖。实现依赖使用 `PRIV_REQUIRES`，公共头文件依赖使用 `REQUIRES`；使用 FreeRTOS 的组件显式声明 `freertos` 依赖。
 - 统一使用预设 `default`，`binaryDir` 保持相对路径 `build/default`。VS Code 的目标、构建目录、`sdkconfig` 路径须与预设一致，编译数据库为 `build/default/compile_commands.json`。

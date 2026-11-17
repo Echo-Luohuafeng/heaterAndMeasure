@@ -12,7 +12,7 @@
 #include "heater_protocol.h"
 
 #define ADC_SPI_HOST SPI2_HOST
-#define ADC_SPI_CLOCK_HZ 1000000
+#define ADC_SPI_CLOCK_HZ 2000000
 #define ADC_RESET 0x06
 #define ADC_START_SYNC 0x08
 #define ADC_RDATA 0x10
@@ -37,11 +37,18 @@ static esp_err_t transfer(size_t channel, const uint8_t *tx, uint8_t *rx, size_t
         .tx_buffer = tx,
         .rx_buffer = rx,
     };
+    if (length <= sizeof(transaction.tx_data)) {
+        transaction.flags |= SPI_TRANS_USE_TXDATA;
+        memcpy(transaction.tx_data, tx, length);
+        if (rx) transaction.flags |= SPI_TRANS_USE_RXDATA;
+    }
     // Polling is confined to the control task. No DMA or long bus queue is needed
     // for 1-6 byte transactions on this exclusively owned bus.
     gpio_set_level(heater_adc_cs_gpio[channel], 0);
     const esp_err_t result = spi_device_polling_transmit(s_device, &transaction);
     gpio_set_level(heater_adc_cs_gpio[channel], 1);
+    if (result == ESP_OK && rx && (transaction.flags & SPI_TRANS_USE_RXDATA))
+        memcpy(rx, transaction.rx_data, length);
     return result;
 }
 
@@ -72,6 +79,9 @@ esp_err_t ads1220_init(void)
     };
     ESP_RETURN_ON_ERROR(spi_bus_add_device(ADC_SPI_HOST, &device, &s_device),
                         TAG, "ADC SPI device failed");
+    // The bus is private to this one device handle throughout initialization
+    // and control. IDF's device-level bus lock avoids per-transfer arbitration.
+    ESP_RETURN_ON_ERROR(spi_device_acquire_bus(s_device, portMAX_DELAY), TAG, "SPI bus acquisition failed");
     for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
         const uint8_t reset = ADC_RESET;
         ESP_RETURN_ON_ERROR(transfer(i, &reset, NULL, 1), TAG, "ADC reset failed");

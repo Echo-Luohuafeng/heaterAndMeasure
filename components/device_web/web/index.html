@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>四路加热与测量</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#152c3b;background:#f1f5f7}*{box-sizing:border-box}body{max-width:1080px;margin:auto;padding:24px}h1{font-size:26px;margin:0}h2{font-size:18px}p{line-height:1.6}.muted{color:#536b79;font-size:14px}.panel{background:#fff;border:1px solid #dce5ea;border-radius:12px;padding:20px;margin:16px 0}.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}input,button{font:inherit;padding:9px 12px;border:1px solid #c6d4dd;border-radius:7px}input[type=number]{width:85px}input[type=password],input[type=text]{max-width:100%;width:300px}button{background:#17688c;color:white;cursor:pointer}button:disabled{opacity:.5;cursor:wait}.stop{background:#b43737}.secondary{background:#fff;color:#17688c}.channels{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.channel{padding:14px;background:#f5f8fa;border-radius:8px}.value{font-size:25px;font-variant-numeric:tabular-nums}canvas{width:100%;height:260px;display:block}#message{min-height:25px;white-space:pre-wrap}details{margin:16px 0}summary{cursor:pointer;font-weight:600}.badge{padding:5px 9px;border-radius:6px;background:#e5f1f5}label{font-size:14px}@media(max-width:600px){body{padding:12px}.channels{grid-template-columns:repeat(2,1fr)}.panel{padding:14px}}
+</style>
+<h1>四路加热与电阻测量</h1>
+<p class="muted">50 Hz 采样 · 每秒批量更新 · 缓存支持断线补传</p>
+<div class="panel row"><label>设备口令 <input id="token" type="password" autocomplete="off" placeholder="USB 启动日志中的 API token"></label><button id="connect">连接</button><span id="connection" class="badge">未连接</span></div>
+<div id="message" role="status"></div>
+<div class="panel">
+<div class="channels" id="channels"></div>
+<canvas id="plot" aria-label="最近一分钟四路电阻曲线"></canvas>
+<div class="muted" id="diagnostics">等待数据</div>
+</div>
+<div class="panel">
+<h2>加热控制</h2><p class="muted">设定范围 0–95，以 15 ms 加热窗口为基准。控制期间每秒续约，失去控制心跳后默认 5 秒停热。页面重开或设备重启不会自动恢复加热。</p>
+<div class="row" id="duties"></div>
+<div class="row" style="margin-top:16px"><button id="set">应用四路设定</button><button id="stop" class="stop">立即停热</button><button id="resume" class="secondary">维护后恢复零占空比采样</button><button id="reboot" class="secondary">重启设备</button></div>
+</div>
+<div class="panel"><div class="row"><button id="csv" class="secondary">导出设备缓存 CSV</button><span id="store" class="muted"></span></div><p id="device" class="muted"></p></div>
+<details class="panel"><summary>固件升级</summary><p class="muted">选择本工程的应用 .bin。升级会停止加热并暂停测量，成功后重启；失败后使用上方按钮恢复零占空比采样。</p><div class="row"><input id="firmware" type="file" accept=".bin"><button id="ota">上传并升级</button></div><p id="otaStatus" class="muted"></p></details>
+<details class="panel"><summary>Wi-Fi 配网</summary><p class="muted">保存后停热并重启。连接电脑所在的 2.4 GHz 网络，通过路由器查看设备 IP；连接失败约 30 秒后恢复配置热点。</p><div class="row"><input id="ssid" type="text" placeholder="SSID" maxlength="32"><input id="wifiPassword" type="password" placeholder="Wi-Fi 密码"><button id="wifi">保存并重启</button></div></details>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), colors=['#187a9d','#ca7827','#388258','#9b4c99'];
+let token=sessionStorage.getItem('heaterToken')||'',socket=null,cursor=0,boot='',history=[],status=null,ownsControl=false,polling=false,heartbeatBusy=false,reconnectTimer=null;
+$('token').value=token;
+for(let i=0;i<4;i++){
+ const card=document.createElement('div');card.className='channel';card.innerHTML=`<div style="color:${colors[i]}">通道 ${i+1}</div><div class="value" id="r${i}">— Ω</div><div class="muted" id="d${i}">占空比 0</div>`;$('channels').append(card);
+ const label=document.createElement('label');label.textContent=`通道 ${i+1} `;const input=document.createElement('input');input.id=`duty${i}`;input.type='number';input.min=0;input.max=95;input.step=1;input.value=0;label.append(input);$('duties').append(label);
+}
+function message(text){$('message').textContent=text;}
+async function api(path,options={}){
+ const response=await fetch(path,{...options,headers:{Authorization:`Bearer ${token}`,...options.headers},cache:'no-store'});
+ const body=await response.json();if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);return body;
+}
+function updateFrame(f){
+ for(let i=0;i<4;i++){$(`r${i}`).textContent=f[4][i]===null?'无效':`${f[4][i].toFixed(4)} Ω`;$(`d${i}`).textContent=`生效占空比 ${f[3][i]}`;}
+ $('diagnostics').textContent=`采样序号 ${f[1]} · 有效标记 ${f[5]} · 故障 ${f[6]} · 时序迟到 ${f[7]} · 队列丢帧 ${f[8]} · 控制栈余量 ${f[9]} 字节`;
+}
+function draw(){
+ const canvas=$('plot'),ratio=window.devicePixelRatio||1,w=canvas.clientWidth,h=260;canvas.width=w*ratio;canvas.height=h*ratio;const c=canvas.getContext('2d');c.scale(ratio,ratio);c.clearRect(0,0,w,h);if(!history.length)return;
+ const left=55,right=w-12,top=20,bottom=h-30,end=history.at(-1)[2],start=Math.max(0,end-60000000);let min=Infinity,max=-Infinity;
+ for(const f of history)for(const r of f[4])if(r!==null){min=Math.min(min,r);max=Math.max(max,r);}if(!Number.isFinite(min)){min=90;max=180;}const margin=Math.max(.05,(max-min)*.1);min-=margin;max+=margin;
+ c.font='12px system-ui';for(let i=0;i<5;i++){const y=top+(bottom-top)*i/4;c.strokeStyle='#e2e9ee';c.beginPath();c.moveTo(left,y);c.lineTo(right,y);c.stroke();c.fillStyle='#536b79';c.fillText((max-(max-min)*i/4).toFixed(2),0,y+4);}
+ for(let i=0;i<4;i++){c.strokeStyle=colors[i];c.lineWidth=1.5;c.beginPath();let pen=false,previous=0;for(const f of history){const r=f[4][i];if(r===null||f[2]<start){pen=false;continue;}const x=left+(right-left)*(f[2]-start)/60000000,y=bottom-(bottom-top)*(r-min)/(max-min);if(pen&&f[2]-previous<40000)c.lineTo(x,y);else c.moveTo(x,y);pen=true;previous=f[2];}c.stroke();}
+ c.fillStyle='#536b79';c.fillText('最近 60 秒',left,h-8);
+}
+function stream(){
+ clearTimeout(reconnectTimer);if(socket){socket.onclose=null;socket.close();}
+ const current=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws?token=${encodeURIComponent(token)}&from=${cursor}&boot=${boot}`);socket=current;
+ current.onopen=()=>{$('connection').textContent='已连接';};
+ current.onmessage=event=>{
+  const batch=JSON.parse(event.data);if(boot&&boot!==batch.boot_id){history=[];cursor=0;ownsControl=false;message('设备已重启，加热设定已清除。');}boot=batch.boot_id;
+  if(batch.lost)message(`缓存中已有 ${batch.lost} 帧被覆盖。`);
+  for(const f of batch.frames){if(f[0]<cursor)continue;history.push(f);updateFrame(f);}cursor=batch.next;
+  if(history.length){const cutoff=history.at(-1)[2]-60000000;history=history.filter(f=>f[2]>=cutoff);}draw();
+ };
+ current.onclose=()=>{$('connection').textContent='连接中断';ownsControl=false;if(socket===current)reconnectTimer=setTimeout(stream,2000);};
+ current.onerror=()=>{$('connection').textContent='连接失败';};
+}
+async function poll(){
+ if(!token||polling)return;polling=true;
+ try{status=await api('/api/status');if(boot&&status.boot_id!==boot)ownsControl=false;
+  $('device').textContent=`固件 ${status.version} · ${status.network.ip} · RSSI ${status.network.rssi} dBm · 内部 RAM ${status.free_internal_bytes} 字节 · ${status.verified?'自检通过':'自检未通过'} · ${status.maintenance?'维护中':'采样中'}`;
+  $('store').textContent=`${status.store.psram?'PSRAM':'内部 RAM 降级缓存'} · ${status.store.next-status.store.oldest}/${status.store.capacity} 帧 · 历史覆盖 ${status.store.overwritten} 帧`;
+  $('otaStatus').textContent=status.ota.active?`已写入 ${status.ota.received}/${status.ota.total} 字节`:status.ota.error?`升级错误 ${status.ota.error}`:'';
+  if(status.maintenance)ownsControl=false;
+  if(status.control_ready===false){$('diagnostics').textContent=`采样初始化失败（${status.control_init_error}），输出已关闭。检查 ADC 供电与连接后重启；网页和 OTA 可继续使用。`;}
+  $('set').disabled=!status.verified||status.maintenance||status.control_ready===false;$('resume').disabled=!status.maintenance||status.ota.active||status.control_ready===false;
+ }catch(error){$('connection').textContent=error.message;ownsControl=false;}finally{polling=false;}
+}
+async function connectDashboard(){const snapshot=await api('/api/status');boot=snapshot.boot_id;cursor=Math.max(snapshot.store.oldest,snapshot.store.next-50);if(snapshot.latest)updateFrame(snapshot.latest);stream();poll();}
+$('connect').onclick=async()=>{token=$('token').value.trim();cursor=0;boot='';history=[];ownsControl=false;try{await connectDashboard();sessionStorage.setItem('heaterToken',token);message('连接成功。');}catch(e){message(e.message);}};
+async function command(text){return api('/api/control',{method:'POST',headers:{'Content-Type':'text/plain'},body:text});}
+$('set').onclick=async()=>{const duties=Array.from({length:4},(_,i)=>Number($(`duty${i}`).value));if(duties.some(v=>!Number.isInteger(v)||v<0||v>95)){message('请输入四个 0–95 整数。');return;}try{await command(`SET ${duties.join(' ')}`);ownsControl=duties.some(v=>v>0);message('设定已接收，下一周期生效。');}catch(e){message(e.message);}};
+$('stop').onclick=async()=>{ownsControl=false;try{await command('STOP');message('加热已停止。');}catch(e){message(`停热命令未确认：${e.message}；控制租约到期后停热。`);}};
+$('resume').onclick=async()=>{try{await api('/api/resume',{method:'POST'});message('已恢复零占空比采样。');poll();}catch(e){message(e.message);}};
+$('reboot').onclick=async()=>{if(!confirm('停止实验并重启设备？'))return;ownsControl=false;try{await api('/api/reboot',{method:'POST'});message('设备正在重启。');}catch(e){message(e.message);}};
+setInterval(async()=>{if(!ownsControl||heartbeatBusy||document.hidden)return;heartbeatBusy=true;try{await command('PING');}catch(e){ownsControl=false;message(`续约失败：${e.message}`);}finally{heartbeatBusy=false;}},1000);
+setInterval(poll,1000);
+window.addEventListener('resize',draw);
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&ownsControl){ownsControl=false;command('STOP').catch(()=>{});}});
+window.addEventListener('pagehide',()=>{if(ownsControl)fetch('/api/control',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'text/plain'},body:'STOP',keepalive:true}).catch(()=>{});});
+$('csv').onclick=async()=>{
+ const button=$('csv');button.disabled=true;try{const snapshot=await api('/api/status');const target=snapshot.store.next;let from=snapshot.store.oldest;
+ const lines=['boot_id,cursor,sequence,cycle_start_us,duty1,duty2,duty3,duty4,R1,R2,R3,R4,valid_mask,faults,deadline_misses,telemetry_drops,control_stack_free_bytes'];
+ while(from<target){const batch=await api(`/api/data?from=${from}&limit=250&boot=${snapshot.boot_id}`);if(batch.lost)throw new Error('导出期间缓存已覆盖，请重新导出。');for(const f of batch.frames){if(f[0]>=target)break;lines.push([snapshot.boot_id,f[0],f[1],f[2],...f[3],...f[4].map(r=>r===null?'':r),...f.slice(5)].join(','));}if(batch.next<=from)break;from=batch.next;}
+ const url=URL.createObjectURL(new Blob([lines.join('\n')+'\n'],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`heater-${snapshot.boot_id}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);message(`已导出 ${lines.length-1} 帧。`);
+ }catch(e){message(e.message);}finally{button.disabled=false;}
+};
+$('ota').onclick=async()=>{const file=$('firmware').files[0];if(!file){message('请选择应用 .bin 文件。');return;}if(!confirm('停止加热和采样，并上传新固件？'))return;ownsControl=false;$('ota').disabled=true;message('正在上传固件，请保持页面与设备连接。');try{await api('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});message('升级完成，设备正在重启。');}catch(e){message(`升级未确认：${e.message}。查看设备状态，失败后可恢复采样。`);}finally{$('ota').disabled=false;}};
+$('wifi').onclick=async()=>{if(!confirm('保存 Wi-Fi 配置将停止实验并重启，继续？'))return;ownsControl=false;try{await api('/api/wifi',{method:'POST',body:new URLSearchParams({ssid:$('ssid').value,password:$('wifiPassword').value})});$('wifiPassword').value='';message('已保存并重启。请连接同一路由器，查看设备的新 IP。');}catch(e){message(e.message);}};
+if(token){connectDashboard().catch(e=>message(e.message));}
+</script>
+</html>

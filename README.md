@@ -2,8 +2,9 @@
 # heater_and_measure
 
 ESP32-S3 N16R8 四路特制 PT100 加热与四线电阻测量固件，使用 ESP-IDF 6.1.1、
-VS Code ESP-IDF 扩展和当前 Dev Container。Flash 16 MB，PSRAM 未启用，
-USB Serial/JTAG 用于日志和上位机通信，GPIO48 RGB 灯保留。
+VS Code ESP-IDF 扩展和当前 Dev Container。Flash 16 MB，PSRAM 按 Octal 80 MHz
+配置，启用启动内存测试。Wi-Fi 用于网页、数据与 OTA；USB Serial/JTAG 保留日志
+和停热救援。PSRAM 已实板验证为 8 MB；当前 CPU 为 240 MHz，启用性能优化编译。
 
 每 20 ms 一个周期：前 15 ms 按四路独立占空比加热，后 5 ms 完成开关切换、
 四路并行转换和数据读取。输入为整数 0～95，以 15 ms 加热窗口为基准；
@@ -11,16 +12,28 @@ USB Serial/JTAG 用于日志和上位机通信，GPIO48 RGB 灯保留。
 
 ## 模块与任务
 
-`heater_board` 管理引脚和 MCPWM；`ads1220` 管理共用 SPI 总线、四路 GPIO 片选
-和 ADC 配置；`heater_control` 执行阶段调度与采样；`heater_protocol` 提供纯 C
-命令解析、补码解码和比例换算；`host_link` 执行独立的 USB 收发。
-`app_main()` 完成初始化和任务启动后返回，采用 IDF 默认双核调度。
+`heater_board` 管理引脚和 MCPWM；`ads1220` 管理 SPI 与 ADC；
+`heater_control` 执行阶段调度、采样和控制租约；`heater_protocol` 解析命令与换算。
+`telemetry_store` 从内部 RAM 队列取样，写入 4 MiB PSRAM 环形缓存，
+PSRAM 不可用时降级为 32 KiB 内部 RAM；`network_manager` 管理配网和重连；
+`device_web` 提供网页、HTTP/WebSocket 与 OTA；`host_link` 仅提供 USB STOP/PING。
+`app_main()` 完成初始化和任务启动后返回。
 
-| 任务 | 优先级 | 栈大小（字节） | 等待方式 |
-|---|---:|---:|---|
-| heater_cycle | 20 | 6144 | 定时器及 DRDY 任务通知 |
-| host_rx | 4 | 4096 | USB 接收阻塞等待 |
-| host_tx | 3 | 4096 | 输出队列阻塞等待 |
+| 任务 | 优先级 | 栈大小（字节） | 核心 | 等待方式 |
+|---|---:|---:|---:|---|
+| heater_cycle | 20 | 6144 | 1 | GPTimer / DRDY / 维护通知 |
+| sample_store | 6 | 4096 | 0 | 采样队列 |
+| HTTP 服务 | 4 | 10240 | 0 | socket / 服务工作队列 |
+| web_push | 3 | 4096 | 0 | 固定 1000 ms 周期 |
+| wifi_reconnect | 4 | 4096 | 0 | 通知及退避延时，仅 STA 配网后创建 |
+| usb_rescue | 4 | 4096 | 0 | USB 阻塞接收 |
+| boot_verify | 5 | 4096 | 0 | 启动自检，完成后删除 |
+| ota_writer | 5 | 6144 | 0 | 上传接收，仅升级时创建 |
+
+控制初始化任务也在 Core 1 分配 GPIO/GPTimer 中断，完成后删除。
+这样控制及中断与默认运行在 Core 0 的 Wi-Fi 任务隔离；lwIP 也固定在 Core 0。
+PSRAM 只承担历史与发送缓存，任务栈、控制状态及 OTA 写入缓冲使用内部 RAM。
+后续变更需复查任务栈余量、迟到计数和实际时序；已验证结果见文末。
 
 FreeRTOS tick 为 10 ms，周期和短等待由 1 MHz GPTimer 驱动。
 中断执行 GPIO、PWM 和 FromISR 通知，不执行 SPI、日志或浮点换算。
@@ -49,7 +62,8 @@ REFP0/REFN0 外部参考，IDAC1 1.5 mA 输出到 AIN2，IDAC2 关闭。
 配置寄存器为 `04 90 47 60`，启动逐路读回核对，失败则关闭请求并停止初始化。
 
 S3 SPI 主机只有三个硬件片选槽，使用一个 SPI 设备和四个 GPIO 片选。
-SPI 为 mode 1、1 MHz，初始化和控制任务独占总线。
+SPI 为 mode 1、2 MHz，初始化和控制任务使用同一设备句柄独占总线。
+小于等于四字节的传输使用内联缓冲，减少轮询开销。
 IDAC 保持使能，由 PhotoMOS 隔离加热；周期间不发 POWERDOWN。
 启动产生的初始转换丢弃。
 
@@ -61,7 +75,7 @@ IDAC 保持使能，由 PhotoMOS 隔离加热；周期间不发 POWERDOWN。
 | 15000 µs | PWM 强制低，功率端接地放电，加热功率归零 |
 | 15100 µs | HEAT_REQ 拉低，断开功率路径 |
 | 15200 µs | MEAS_REQ 拉高，接通测量开关 |
-| 17000 µs | 通知任务启动四路转换，四路 START 命令须在 17200 µs 前全部完成 |
+| 16800 µs | 通知任务启动四路转换，四路 START 命令须在 17100 µs 前全部完成 |
 | 转换就绪 | 分别锁存 DRDY，依次读取 |
 | 19050 µs | 中断拉低 MEAS_REQ，强制结束测量 |
 | 19350 µs | 更新通道许可，非阻塞提交周期数据 |
@@ -70,45 +84,85 @@ IDAC 保持使能，由 PhotoMOS 隔离加热；周期间不发 POWERDOWN。
 
 放电和预充电阶段 HEAT_REQ 为高，但 PWM 为低，F+/F− 接地，没有 48 V
 加热功率。互锁切换经过两个请求均为低的阶段。开关留 0.5 ms 导通时间，
-随后留 1.3 ms 模拟稳定时间；读操作仅在测量截止前执行。
-160 MHz 实板上，四路软件片选 START 命令及任务调度超过 100 µs，
-因此启动窗口为 200 µs；每条命令发送前后均检查截止时间。
+随后留 1.1 ms 模拟稳定时间；读操作仅在测量截止前执行。
+CPU 240 MHz、性能优化及独占 2 MHz SPI 用于减少缓存与调度开销。
+START 窗口为 300 µs，每条命令发送前后均检查截止时间。
+`/api/status` 的 timing 字段报告最迟 START 完成时间及启动/读取超时计数。
 超时帧仍判为无效，测量开关仍由中断在 19050 µs 关闭。
 中断迟到超过默认 50 µs 时立即关闭两个请求、丢弃该帧，重新安排未来的
 绝对 20 ms 边界；不会将过去的时间重新设置为闹钟。
 
-## 上位机协议
+## Wi-Fi、网页与配网
 
-内置 USB Serial/JTAG，ASCII 命令支持以 CR（`\r`）、LF（`\n`）或 CRLF（`\r\n`）结束，
-CRLF 只执行一次命令，空行忽略：
-
-```text
-SET 5 5 5 5
-PING
-STOP
-```
-
-- SET 恰好四个 0～95 整数，下一周期开始统一生效，回复 `ACK,SET`；
-  设定持续保持，直到新的 SET、STOP 或设备重启，实际输出仍受测量和时序保护约束。
-- PING 为可选通信检查，回复 `ACK,PING`，不改变加热状态。
-- STOP 立即关闭加热请求并取消当前 SET，回复 `ACK,STOP`。
-- SET 无命令超时，无需定期发送 PING；上位机停止发送或串口断开后设定继续保持。
-- 非法/越界命令回复 `ERR,COMMAND`，保持原设定；超过 64 字节的命令丢弃至换行，
-  回复 `ERR,LINE_TOO_LONG`。
-- ACK 表示接收，实际值以 DATA 帧为准；队列拥塞时 ACK/遥测可能丢失。
-
-健康运行每 20 ms 发送一行，字段依次为：
+首次 USB 完整烧录后，在 115200 波特率启动日志中记录：
 
 ```text
-DATA,sequence,cycle_start_us,duty1,duty2,duty3,duty4,R1,R2,R3,R4,valid_mask,faults,deadline_misses,telemetry_drops,control_stack_free_bytes
+Recovery AP: Heater-xxxxxx; AP password / API token: <设备生成的32位口令>
 ```
 
-实际行包含数值。电阻单位为 Ω，六位小数不代表实际精度。
-cycle_start_us 为 GPTimer 启动后的周期起点时间。
-valid_mask 位 0～3 对应通道 1～4，四路有效时为十进制 15。
-无效通道为 `nan`，不回填旧数据。duty 表示周期起点的生效设定，
+每台设备生成独立口令并保存到 NVS。口令同时作为恢复热点密码和 API token，
+不要提交到仓库。没有路由器配置时，连接该热点并打开 `http://192.168.4.1/`，
+输入口令即可查看采样、控制加热、导出缓存和 OTA。
+
+网页的 Wi-Fi 配网入口保存电脑所在的 2.4 GHz 网络 SSID/密码，停热并重启。
+连接成功后关闭配置热点；路由器不可达时，按 1/2/4/8/16/30 秒间隔重试，
+约 30 秒后开启恢复热点，继续尝试连接。网页 IP 可从路由器 DHCP 列表或 USB
+日志 `Dashboard: http://<IP>/` 查看。建议在路由器设置 DHCP 地址保留。
+
+正常访问使用电脑浏览器打开设备 IP，不需要互联网、CDN 或上位机服务。
+默认最大发射功率为 10 dBm，可在 IDF PHY 配置中调整（10–20 dBm）。
+此设置适合近距离开发，不能代替稳定供电。Wi-Fi 初始化时出现 Brownout 日志
+需要检查 USB 输入、3.3 V 稳压和去耦，欠压保护保持开启。
+最多两个 WebSocket 查看者，各自使用独立游标。新连接从最近一秒开始显示，
+重连携带已收到的游标补传；`more=true` 表示尚有积压。完整历史可导出 CSV。
+浏览器只保留最近一分钟曲线；长期自动保存请使用下方 Python 采集工具。
+
+此版本用于受控局域网，HTTP/WebSocket 未加密；控制、数据、配网和 OTA API
+均需口令。需要跨不可信网络部署时另行增加 HTTPS 与固件签名。
+
+## 数据缓存与 HTTP API
+
+控制任务仍每 20 ms 非阻塞提交完整采样，内部队列为 32 条。
+缓存任务及时取样，网络每秒发送通常约 50 帧；有积压时单批最多 100 帧。
+按约 64 字节/记录估算，4 MiB 能保留约 22 分钟，32 KiB 降级缓存约 10 秒，
+实际容量以 `/api/status` 为准。满缓存覆盖最旧记录并计数，队列满则记录丢帧。
+网络拥塞不等待采样任务。PSRAM 历史断电/重启后丢失，本版不持续写 Flash 日志。
+
+| 接口 | 说明 |
+|---|---|
+| `GET /` | 随固件打包的网页 |
+| `GET /api/status` | 启动 ID、版本、网络、缓存、维护/OTA、栈/内存和最近采样 |
+| `GET /api/data?from=1&limit=250&boot=<boot_id>` | 从游标读取，limit 为 1–250；from=0 从最旧记录开始 |
+| `POST /api/control` | `text/plain` 命令 SET / PING / STOP，立即回复 |
+| `POST /api/resume` | 维护后恢复零占空比采样，不恢复旧 SET |
+| `POST /api/reboot` | 确认输出关闭后重启，例如修复 ADC 接线后重新初始化 |
+| `POST /api/wifi` | 表单 `ssid=...&password=...`，保存后重启 |
+| `POST /api/ota` | 原始应用 `.bin` 字节流，成功后重启 |
+| `GET /ws?token=<口令>&from=<游标>&boot=<启动ID>` | 鉴权握手后的每秒批量数据 |
+
+HTTP API 使用 `Authorization: Bearer <口令>`。WebSocket 在握手前校验口令，
+每秒收到 JSON：
+
+```json
+{"schema":1,"boot_id":"0123456789abcdef","oldest":1,"next":2,"lost":0,"more":false,"frames":[[1,1,20000,[0,0,0,0],[100.0,null,100.0,100.0],13,2,0,0,2048]]}
+```
+
+每条记录字段为：
+
+```text
+[cursor, sequence, cycle_start_us, [duty1,duty2,duty3,duty4],
+ [R1,R2,R3,R4], valid_mask, faults, deadline_misses,
+ telemetry_drops, control_stack_free_bytes]
+```
+
+电阻单位为 Ω，无效值为 `null`，不回填旧数据；六位小数不代表实际精度。
+`valid_mask` 位 0–3 对应四个通道。`cycle_start_us` 是本次启动的 GPTimer 周期时间，
+维护恢复时补偿暂停时长以保留时间缺口。`duty` 表示周期起点生效设定，
 STOP/故障可能提前终止该周期加热。
-迟到、丢遥测计数和控制任务历史最低栈余量（字节）供实板诊断。
+
+`next` 是下一次读取的游标；`lost` 表示请求位置早于缓存最旧记录的数量。
+HTTP 的 boot 参数变化会返回 `BOOT_CHANGED`；客户端必须按 boot_id 区分重启，
+按游标去重，落盘后再前进游标。发送到 socket 不代表上位机已经保存。
 
 | faults 位值（十进制） | 含义 |
 |---:|---|
@@ -116,39 +170,80 @@ STOP/故障可能提前终止该周期加热。
 | 2 | 未收到/读完全部 ADC |
 | 4 | SPI 失败 |
 | 8 | 饱和、非正值或超出合理范围的电阻 |
-| 16 | 保留（旧版命令超时位，当前固件不使用） |
+| 16 | 控制租约到期，保持停热至下一次 SET/STOP |
 | 32 | 当前周期收到 STOP |
 | 64 | PWM 失败，加热锁定至重启 |
 
-上电占空比为零。冷启动首帧可能因时序检查返回 `nan`，后续周期继续采样。
-每路必须在前一周期完成有效测量才允许加热；
-失效通道下一周期实际占空比为零。默认有效保护范围 90～180 Ω，
-为额定 100～160 Ω 留出边界噪声裕量。全局时序异常取消全部通道许可。
-USB 发送与控制任务分离，队列满时丢遥测，周期任务不等待发送。
-日志可能出现在同一端口，按 DATA/ACK/ERR/READY 前缀识别协议。
+## 控制与 OTA
 
-## 构建与使用
+`SET 5 5 5 5` 设置四路 0–95 整数，下一周期统一生效；
+`PING` 仅为已有 SET 续约，不启动加热；`STOP` 立即取消设定并关闭加热。
+SET/PING 默认续约 5 秒，控制端应每秒 PING。到期停热，采样和缓存继续。
+STA 断开或热点客户端断开也取消加热；重连不会恢复 SET。
+网页隐藏、关闭或控制连接中断时停止续约并尝试 STOP，设备租约仍是最终保护。
+
+上电设定为零，每路只有前一周期有效测量才允许加热；失效通道下一周期输出为零。
+默认有效范围 90–180 Ω；全局时序异常取消全部许可。
+USB 不再持续发送 DATA，保留日志与 STOP/PING，USB SET 回复 `ERR,USE_WIFI`。
+旧 `tools/heater_monitor.py` 适用于历史 USB 固件，当前使用 `heater_wifi.py`。
+
+ADC 寄存器验证等初始化失败时，输出关闭并进入恢复模式，网页、配网和 OTA
+仍可使用。状态中的 `control_ready=false`、`control_init_error` 说明采样尚未启动，
+不产生伪造数据。检查测量板 H5 的 3.3 V 供电、共地和 SPI 后，通过网页重启。
+板级输出初始化失败等无法确认安全关断的情况仍停止启动。
+
+两个 4 MiB 应用分区及 OTA 状态分区见 `partitions.csv`。
+第一次迁移必须使用完整 `flash`，同时写 bootloader、分区表、初始 OTA 数据和应用；
+不能只使用 `app-flash`。NVS 保持原偏移，本版不自动擦除 NVS。
+网络 OTA 只上传 `build/default/heater_and_measure.bin`，不上传合并镜像、
+bootloader 或分区表。每次发行建议更新根 CMakeLists.txt 中的 PROJECT_VER。
+
+OTA 进入维护状态，清除 SET、关闭请求与 PWM，控制任务停止 GPTimer 和 ADC
+操作后发出确认，收到确认才写 Flash。上传使用内部 RAM 4 KiB 缓冲，检查尺寸、
+ESP32-S3 芯片标记及工程名，结束时由 IDF 校验镜像，再切换启动分区。
+上传/校验失败保留原启动分区，维持停热，用户显式恢复零占空比采样。
+异步 OTA 接收不占用 HTTP 服务主循环，上传时可读取状态和进度。
+
+初次 USB 启动在 OTA 状态中登记有效基线。从采样正常版本进行 OTA，要求新版本
+在约 10 秒内检测到十次连续健康采样快照后确认，失败则回滚；从 ADC 初始化失败的
+恢复模式升级，允许新版本保留网络恢复模式，以便没有测量板时也能开发 OTA。
+本次升级是否要求采样自检保存在 NVS，断电后仍有效。正常路由器离线不影响版本确认。
+OTA 状态写入同样暂停控制，确认后恢复零占空比采样。任务看门狗触发重启以支持
+启动卡死回滚。当前已确认版本的测量异常由通道保护处理，仍允许 OTA 修复。
+
+## 构建与上位机使用
 
 ```bash
 idf.py --preset default build
 python tests/run_native.py
-idf.py --preset default -p /dev/serial/by-id/实际设备 flash
+python tests/run_web.py
 ```
 
-关闭 IDF monitor 等占用端口的程序，先读取零占空比数据：
+`run_web.py` 需要 Node.js，会优先使用 PATH，其次使用当前 VS Code Server 内置 Node。
+首次迁移需停止实验，再用实际设备路径完整烧录：
 
 ```bash
-python tools/heater_monitor.py -p /dev/serial/by-id/实际设备 --seconds 10 --csv baseline.csv
+idf.py --preset default -p /dev/serial/by-id/实际设备 flash monitor
 ```
 
-以四路 5% 占空比发送一次 SET 并监视，退出时发送 STOP：
+记录启动口令、确认 PSRAM 自检/容量和网页地址后退出 monitor（Ctrl+]）。
+Python 工具只依赖标准库；口令从交互输入、HEATER_TOKEN 环境变量或
+`--token-file` 读取。CSV 用新建模式，拒绝覆盖已有文件。
 
 ```bash
-python tools/heater_monitor.py -p /dev/serial/by-id/实际设备 --duty 5 5 5 5 --seconds 5
+python tools/heater_wifi.py --url http://192.168.1.50 status
+python tools/heater_wifi.py --url http://192.168.1.50 monitor --seconds 10 --csv baseline.csv
+python tools/heater_wifi.py --url http://192.168.1.50 monitor --history --seconds 10 --csv history.csv
+python tools/heater_wifi.py --url http://192.168.1.50 monitor --duty 2 2 2 2 --seconds 5 --csv heated.csv
+python tools/heater_wifi.py --url http://192.168.1.50 ota build/default/heater_and_measure.bin
+python tools/heater_wifi.py --url http://192.168.1.50 resume
+python tools/heater_wifi.py --url http://192.168.1.50 reboot
 ```
 
-工具正常退出发送 STOP；未提供 --duty 时只接收，不发命令。
-依赖容器已安装的 pyserial，CSV 新建文件，避免覆盖记录。
+采集工具每秒请求新数据，有积压时加快补传，CSV 落盘后推进游标。
+未提供 --duty 不发加热命令；提供后只发送一次 SET，并每秒 PING，结束尝试 STOP。
+连接中断后只恢复数据采集，不重发 SET；重启数据带新的 boot_id。
+恢复采样不恢复旧加热设定。
 
 ## 校准与实板验证
 
@@ -164,5 +259,23 @@ python tools/heater_monitor.py -p /dev/serial/by-id/实际设备 --duty 5 5 5 5 
 
 首次硬件运行需确认引脚、电源、Q901 和 UMW 驱动器行为，示波器验证
 PWM 低侧充电、自举电压、15000 µs 关断、PhotoMOS 通断和采样窗口。
-在不同占空比、USB 拥塞、上位机断开和 ADC 缺失的条件下检查有效标记、
-迟到计数、任务栈余量和输出关断。编译及软件测试不代表这些实板验证已完成。
+在不同占空比、Wi-Fi 传输/重连、慢客户端、ADC 缺失的条件下检查有效标记、
+迟到计数、任务栈余量、内部堆内存和输出关断。验证 PSRAM 8 MB 容量与读写稳定性；
+验证 OTA 暂停期间两个请求关闭、升级中断/断电后可启动旧版本、坏版本启动回滚。
+已完成的软件及实板检查见下；精度、温漂、模拟稳定时间和示波器波形仍需专门验证。
+
+## 已完成的实板检查（2026-11-17）
+
+当前固件版本 `2.0.8-wifi`，本次设备网页地址为 `http://10.0.0.109/`。
+设备口令与原 Flash 备份仅保存在被忽略的 `build/default/`，不进入仓库。
+
+- ESP32-S3 rev 0.2、Flash 16 MB、PSRAM 8 MB；80 MHz PSRAM 启动读写测试通过，缓存 65536 条。
+- 实机 HTTP 鉴权、非法参数、STOP、恢复模式保护及每秒 WebSocket 推送通过。
+- 已通过 Wi-Fi 写入并确认新版本；截断镜像被拒绝且保留原固件，失败处理不复位。
+- 使用隔离构建的启动即失败固件验证自动回滚，正常版本恢复并可访问。
+- 0、单路 1、四路 1、四路 2、STOP 及 5 秒控制租约超时测试，共记录 1226 帧。
+- 测试中四路全部有效，相邻记录间隔均为 20000 µs，启动/读取超时、时序迟到和队列丢帧均为零。
+- 全部实际占空比不超过 2；测试结束为四路零占空比。控制任务最低栈余量 4952 字节。
+
+原始记录为 `build/default/heater-test-max2.csv`，汇总为 `build/default/heater-test-max2.json`。
+此结果覆盖当前接线与短时测试条件，不代替不同供电、负载、网络环境下的时序与模拟精度验证。

@@ -21,6 +21,8 @@ static bool drive_task;
 static unsigned task_waits;
 static unsigned task_frame_limit;
 static bool check_hold;
+static bool drive_pause, pause_ack, pause_timeout, timer_running;
+static uint64_t stopped_counter;
 static jmp_buf task_escape;
 
 const int heater_pwm_gpio[4] = {4, 5, 6, 7};
@@ -35,7 +37,9 @@ bool heater_board_pwm_apply(const uint8_t duty[4]) { memcpy(pwm, duty, 4); fake_
 esp_err_t ads1220_init(void) { return ESP_OK; }
 esp_err_t ads1220_start(size_t channel) { (void)channel; fake_now += adc_start_time_us; return ESP_OK; }
 esp_err_t ads1220_read(size_t channel, int32_t *code) { *code = adc_codes[channel]; fake_now += 40; return ESP_OK; }
-esp_err_t gptimer_get_raw_count(gptimer_handle_t timer, uint64_t *now) { (void)timer; *now = fake_now; return ESP_OK; }
+esp_err_t gptimer_get_raw_count(gptimer_handle_t timer, uint64_t *now) { (void)timer; *now = timer_running ? fake_now : stopped_counter; return ESP_OK; }
+esp_err_t gptimer_set_raw_count(gptimer_handle_t timer, uint64_t now) { (void)timer; stopped_counter = now; return ESP_OK; }
+int64_t esp_timer_get_time(void) { return (int64_t)fake_now; }
 esp_err_t gptimer_set_alarm_action(gptimer_handle_t timer, const gptimer_alarm_config_t *alarm)
 { (void)timer; assert(alarm->alarm_count > fake_now); return ESP_OK; }
 esp_err_t gptimer_new_timer(const gptimer_config_t *config, gptimer_handle_t *timer)
@@ -43,8 +47,8 @@ esp_err_t gptimer_new_timer(const gptimer_config_t *config, gptimer_handle_t *ti
 esp_err_t gptimer_register_event_callbacks(gptimer_handle_t timer, const gptimer_event_callbacks_t *cb, void *arg)
 { (void)timer; (void)cb; (void)arg; return ESP_OK; }
 esp_err_t gptimer_enable(gptimer_handle_t timer) { (void)timer; return ESP_OK; }
-esp_err_t gptimer_start(gptimer_handle_t timer) { (void)timer; return ESP_OK; }
-esp_err_t gptimer_stop(gptimer_handle_t timer) { (void)timer; return ESP_OK; }
+esp_err_t gptimer_start(gptimer_handle_t timer) { (void)timer; timer_running = true; return ESP_OK; }
+esp_err_t gptimer_stop(gptimer_handle_t timer) { (void)timer; stopped_counter = fake_now; timer_running = false; return ESP_OK; }
 esp_err_t gpio_config(const gpio_config_t *config) { (void)config; return ESP_OK; }
 esp_err_t gpio_install_isr_service(int flags) { (void)flags; return ESP_OK; }
 esp_err_t gpio_isr_handler_add(int pin, void (*cb)(void *), void *arg)
@@ -52,16 +56,43 @@ esp_err_t gpio_isr_handler_add(int pin, void (*cb)(void *), void *arg)
 BaseType_t xTaskCreate(void (*entry)(void *), const char *name, uint32_t stack, void *arg,
                       UBaseType_t priority, TaskHandle_t *task)
 { (void)entry; (void)name; (void)stack; (void)arg; (void)priority; *task = (void *)1; return pdPASS; }
+BaseType_t xTaskCreatePinnedToCore(void (*entry)(void *), const char *name, uint32_t stack, void *arg,
+                                 UBaseType_t priority, TaskHandle_t *task, BaseType_t core)
+{ assert(core == 1); return xTaskCreate(entry, name, stack, arg, priority, task); }
+BaseType_t xTaskNotify(TaskHandle_t task, uint32_t bits, int action)
+{ (void)task; (void)action; notifications |= bits; return pdPASS; }
+SemaphoreHandle_t xSemaphoreCreateBinary(void) { return (void *)3; }
+SemaphoreHandle_t xSemaphoreCreateMutex(void) { return (void *)2; }
+BaseType_t xSemaphoreGive(SemaphoreHandle_t semaphore)
+{ if (semaphore == (void *)3) pause_ack = true; return pdTRUE; }
+BaseType_t xSemaphoreTake(SemaphoreHandle_t semaphore, TickType_t timeout)
+{
+    if (semaphore == (void *)2) return pdTRUE;
+    assert(semaphore == (void *)3);
+    if (timeout && !pause_timeout && !pause_ack) {
+        drive_pause = true; task_waits = 0;
+        if (setjmp(task_escape) == 0) control_task(NULL);
+        drive_pause = false;
+    }
+    const bool acknowledged = pause_ack;
+    pause_ack = false;
+    return acknowledged ? pdTRUE : pdFALSE;
+}
 BaseType_t xTaskNotifyFromISR(TaskHandle_t task, uint32_t bits, int action, BaseType_t *woken)
 { (void)task; (void)action; notifications |= bits; *woken = pdFALSE; return pdPASS; }
 static void fire(uint32_t lateness);
 BaseType_t xTaskNotifyWait(uint32_t entry, uint32_t exit_bits, uint32_t *bits, TickType_t wait)
 {
     (void)entry; (void)exit_bits; (void)wait;
+    if (drive_pause && task_waits++) longjmp(task_escape, 1);
     if (drive_task) {
         if (task_waits == task_frame_limit * 4) longjmp(task_escape, 1);
         switch (task_waits++ % 4) {
         case 0:
+            if (check_hold) {
+                const heater_command_t heartbeat = {.kind = HEATER_COMMAND_PING};
+                assert(heater_control_submit(&heartbeat) == ESP_OK);
+            }
             while (s_control.next_phase != PHASE_START) fire(0);
             fire(0);
             break;
@@ -101,6 +132,8 @@ static void reset(void)
 {
     memset(&s_control, 0, sizeof(s_control));
     s_control.timer = s_control.task = s_control.outbound = (void *)1;
+    s_control.lifecycle = (void *)2;
+    s_control.pause_ack = (void *)3;
     s_control.next_cycle_start_us = 20000;
     s_control.alarm.alarm_count = 20000;
     s_control.next_phase = PHASE_START;
@@ -112,6 +145,8 @@ static void reset(void)
     task_waits = 0;
     task_frame_limit = 2;
     check_hold = false;
+    drive_pause = pause_ack = pause_timeout = false;
+    timer_running = true;
     memset(pwm, 0, sizeof(pwm));
     for (size_t i = 0; i < 4; ++i) adc_codes[i] = 3355443;
 }
@@ -157,7 +192,7 @@ int main(void)
     fake_now += 24;
     start_conversion(s_control.sequence);
     assert(s_control.started_mask == 15 && s_control.faults == 0);
-    assert(fake_now == s_control.cycle_start_us + 17160);
+    assert(fake_now == s_control.cycle_start_us + ADC_START_US + 160);
     fake_now = s_control.cycle_start_us + 18750;
     for (size_t i = 0; i < 4; ++i) adc_ready(&s_drdy_channel[i]);
     heater_telemetry_t actual_timing = frame();
@@ -300,8 +335,7 @@ int main(void)
     assert(last_message.data.valid_mask == 15 && last_message.data.faults == 0);
     assert(memcmp(last_message.data.duty, set.duty, 4) == 0);
 
-    // A single SET holds through 3001 real notification-loop frames (>60 s),
-    // with no host traffic. Check every heated DATA frame, not just the last.
+    // A SET renewed by PING holds through 3001 notification-loop frames (>60 s).
     reset();
     const heater_command_t ping = {.kind = HEATER_COMMAND_PING};
     assert(heater_control_submit(&ping) == ESP_OK);
@@ -331,6 +365,55 @@ int main(void)
     fire(0); // Precharge with held-low PWM.
     fire(0); // Next frame applies STOP's zero duty.
     assert(!heat_request && memcmp(pwm, zero_duty, 4) == 0);
+    // Lease expiry runs in the phase ISR even if the network tasks are blocked.
+    reset();
+    assert(heater_control_submit(&set) == ESP_OK);
+    const uint64_t expiry = s_control.lease_deadline_us;
+    s_control.next_cycle_start_us = expiry;
+    s_control.alarm.alarm_count = expiry;
+    fire(0);
+    assert(!s_control.command_active && !heat_request);
+    assert(s_control.faults & HEATER_FAULT_HOST_TIMEOUT);
+    assert(heater_control_submit(&ping) == ESP_OK && !s_control.command_active);
+
+    // Maintenance acknowledgements execute the real task branch, then prohibit
+    // GPIO phase activity, ADC starts and SET/PING until an explicit resume.
+    reset();
+    assert(heater_control_submit(&set) == ESP_OK);
+    fire(0);
+    reach_conversion();
+    assert(measure_request);
+    assert(heater_control_pause(pdMS_TO_TICKS(2000)) == ESP_OK);
+    assert(s_control.paused && !timer_running && !heat_request && !measure_request);
+    assert(heater_control_submit(&set) == ESP_ERR_INVALID_STATE);
+    assert(heater_control_submit(&ping) == ESP_ERR_INVALID_STATE);
+    phase_alarm(s_control.timer, &(gptimer_alarm_event_data_t){0}, NULL);
+    assert(!heat_request && !measure_request);
+    assert(heater_control_pause(pdMS_TO_TICKS(2000)) == ESP_OK);
+    fake_now += 2000000;
+    assert(heater_control_resume() == ESP_OK);
+    assert(!s_control.maintenance && timer_running && !s_control.command_active);
+    assert(s_control.alarm.alarm_count > fake_now);
+    fire(0);
+    assert(!heat_request && memcmp(pwm, zero_duty, 4) == 0);
+
+    // An acknowledgement timeout never grants permission to write flash.
+    reset(); pause_timeout = true;
+    assert(heater_control_pause(pdMS_TO_TICKS(2000)) == ESP_ERR_TIMEOUT);
+    assert(s_control.maintenance && !s_control.paused && !heat_request && !measure_request);
+    assert(!heater_control_is_paused() && heater_control_is_maintenance());
+    assert(heater_control_resume() == ESP_ERR_INVALID_STATE);
+    // A failed ADC initialization leaves no task/timer. It still permits a
+    // verified output shutdown so web/OTA can recover the device without ADCs.
+    reset();
+    s_control.task = s_control.timer = NULL;
+    assert(heater_control_pause(pdMS_TO_TICKS(1000)) == ESP_ERR_INVALID_STATE);
+    s_control.board_ready = true;
+    assert(heater_control_pause(pdMS_TO_TICKS(1000)) == ESP_OK);
+    assert(heater_control_is_paused() && !heat_request && !measure_request);
+    assert(heater_control_submit(&stop) == ESP_OK);
+    assert(heater_control_submit(&set) == ESP_ERR_INVALID_STATE);
+    assert(heater_control_resume() == ESP_ERR_INVALID_STATE);
     puts("Control timing, shutdown, ADC event and backpressure tests passed");
     return 0;
 }
