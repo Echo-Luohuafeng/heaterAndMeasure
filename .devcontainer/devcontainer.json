@@ -1,0 +1,55 @@
+{
+  "name": "ESP32-S3 (ESP-IDF)",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".",
+    "args": {
+      "DEVICE_GID": "${localEnv:ESP_DEVICE_GID:18}"
+    }
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "containerUser": "vscode",
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
+  "userEnvProbe": "loginInteractiveShell",
+  "init": true,
+  "overrideCommand": true,
+  "containerEnv": {
+    "IDF_TARGET": "esp32s3",
+    "IDF_GIT_SAFE_DIR": "/workspaces/${localWorkspaceFolderBasename}"
+  },
+  "runArgs": [
+    "--privileged",
+    "--group-add=${localEnv:ESP_DEVICE_GID:18}"
+  ],
+  "mounts": [
+    {
+      "source": "/dev",
+      "target": "/dev",
+      "type": "bind"
+    },
+    "source=/var/home/dozon/Documents/esp32/.codex/config.toml,target=/tmp/codex-host-config.toml,type=bind,readonly"
+  ],
+  "onCreateCommand": [
+    "/bin/sh",
+    "-c",
+    "install -d -m 0700 \"$HOME/.codex\" && install -m 0600 /tmp/codex-host-config.toml \"$HOME/.codex/config.toml\""
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "espressif.esp-idf-extension",
+        "ms-vscode.cpptools",
+        "openai.chatgpt"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "idf.currentSetup": "/opt/esp/idf",
+        "idf.port": "detect",
+        "idf.openOcdConfigs": ["board/esp32s3-builtin.cfg"],
+        "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json"
+      }
+    }
+  }
+}

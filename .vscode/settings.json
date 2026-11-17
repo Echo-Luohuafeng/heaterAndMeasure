@@ -1,0 +1,14 @@
+{
+    "idf.currentSetup": "/opt/esp/idf",
+    "idf.flashType": "UART",
+    "idf.port": "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_E0:72:A1:F3:6C:78-if00",
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "idf.buildPath": "build/default",
+    "idf.sdkconfigFilePath": "${workspaceFolder}/build/default/sdkconfig",
+    "idf.customExtraVars": {
+        "IDF_TARGET": "esp32s3"
+    },
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/default/compile_commands.json"
+}
