@@ -1,0 +1,52 @@
+menu "Heater and resistance measurement"
+    config HEATER_MAX_ISR_LATENCY_US
+        int "Maximum accepted phase interrupt lateness (us)"
+        range 10 80
+        default 50
+        help
+            A late phase closes both request signals and skips to the next
+            absolute 20 ms boundary. Validate this limit on the real board.
+    config HEATER_VALID_MIN_MOHM
+        int "Lowest plausible resistance (milliohms)"
+        range 1 159999
+        default 90000
+        help
+            This guard includes noise around the nominal 100-160 ohm range.
+            Invalid samples inhibit heating for that channel next cycle.
+    config HEATER_VALID_MAX_MOHM
+        int "Highest plausible resistance (milliohms)"
+        range 160001 249999
+        default 180000
+    config HEATER_REFERENCE_1_MOHM
+        int "Channel 1 calibrated reference resistance (milliohms)"
+        range 900000 1100000
+        default 1000000
+    config HEATER_REFERENCE_2_MOHM
+        int "Channel 2 calibrated reference resistance (milliohms)"
+        range 900000 1100000
+        default 1000000
+    config HEATER_REFERENCE_3_MOHM
+        int "Channel 3 calibrated reference resistance (milliohms)"
+        range 900000 1100000
+        default 1000000
+    config HEATER_REFERENCE_4_MOHM
+        int "Channel 4 calibrated reference resistance (milliohms)"
+        range 900000 1100000
+        default 1000000
+    config HEATER_OFFSET_1_MOHM
+        int "Channel 1 resistance correction (milliohms)"
+        range -10000 10000
+        default 0
+    config HEATER_OFFSET_2_MOHM
+        int "Channel 2 resistance correction (milliohms)"
+        range -10000 10000
+        default 0
+    config HEATER_OFFSET_3_MOHM
+        int "Channel 3 resistance correction (milliohms)"
+        range -10000 10000
+        default 0
+    config HEATER_OFFSET_4_MOHM
+        int "Channel 4 resistance correction (milliohms)"
+        range -10000 10000
+        default 0
+endmenu

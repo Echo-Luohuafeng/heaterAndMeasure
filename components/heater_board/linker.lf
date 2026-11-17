@@ -1,0 +1,8 @@
+# IDF 6.1.1's MCPWM_CTRL_FUNC_IN_IRAM mapping covers compare updates but does
+# not cover force-level or software-sync operations used by the phase ISR.
+# Place these two driver functions explicitly without modifying the IDF tree.
+[mapping:heater_pwm_isr]
+archive: libesp_driver_mcpwm.a
+entries:
+    mcpwm_gen:mcpwm_generator_set_force_level (noflash)
+    mcpwm_sync:mcpwm_soft_sync_activate (noflash)

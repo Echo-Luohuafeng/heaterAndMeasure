@@ -2,37 +2,34 @@
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
-#define APP_TASK_STACK_SIZE_BYTES 4096
-#define APP_TASK_PRIORITY (tskIDLE_PRIORITY + 1)
-#define APP_TASK_IDLE_DELAY_MS 1000
+#include "freertos/queue.h"
+#include "heater_board.h"
+#include "heater_control.h"
+#include "heater_protocol.h"
+#include "host_link.h"
 
 static const char *TAG = "heater_and_measure";
 
-static void app_task(void *arg)
+static void require_success(esp_err_t result, const char *operation)
 {
-    (void)arg;
-
-    ESP_LOGI(TAG, "Application task started");
-
-    for (;;) {
-        // Placeholder for application coordination; business modules belong in components/.
-        vTaskDelay(pdMS_TO_TICKS(APP_TASK_IDLE_DELAY_MS));
+    if (result != ESP_OK) {
+        heater_board_requests_off();
+        ESP_LOGE(TAG, "%s failed: %s; outputs disabled", operation, esp_err_to_name(result));
+        abort();
     }
 }
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Initializing FreeRTOS application");
-
-    // ESP-IDF task stack sizes are specified in bytes. Leave core affinity to the scheduler.
-    const BaseType_t result = xTaskCreate(app_task, "app_task", APP_TASK_STACK_SIZE_BYTES,
-                                         NULL, APP_TASK_PRIORITY, NULL);
-    if (result != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create application task");
+    QueueHandle_t outbound = xQueueCreate(8, sizeof(heater_message_t));
+    if (outbound == NULL) {
+        heater_board_requests_off();
+        ESP_LOGE(TAG, "Failed to create host output queue");
         abort();
     }
-
-    // ESP-IDF deletes its main task after app_main returns; app_task continues running.
+    require_success(heater_control_init(outbound), "Board/ADC initialization");
+    require_success(heater_control_start(), "Control task start");
+    require_success(host_link_start(outbound), "USB host link start");
+    // The IDF scheduler is already running. All business loops block on events;
+    // app_main returns while the control and USB tasks continue.
 }
