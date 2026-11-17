@@ -151,6 +151,13 @@ static void reset(void)
     for (size_t i = 0; i < 4; ++i) adc_codes[i] = 3355443;
 }
 
+static void reset_recording(void)
+{
+    reset();
+    const heater_command_t start = {.kind = HEATER_COMMAND_START};
+    assert(heater_control_submit(&start) == ESP_OK);
+}
+
 static void fire(uint32_t lateness)
 {
     const gptimer_alarm_event_data_t event = {
@@ -182,9 +189,39 @@ static void reach_conversion(void)
 
 int main(void)
 {
+    // Idle safety sampling must not enqueue any historical samples. SET stages
+    // duties without enabling heat/recording, and PING cannot start an idle run.
+    reset();
+    const heater_command_t staged = {.kind = HEATER_COMMAND_SET, .duty = {2, 1, 0, 2}};
+    assert(heater_control_submit(&staged) == ESP_OK);
+    assert(!heater_control_run_state().running);
+    drive_task = true; task_frame_limit = 4;
+    if (setjmp(task_escape) == 0) control_task(NULL);
+    drive_task = false;
+    heater_telemetry_t private_sample;
+    assert(sent_messages == 0 && !heat_request);
+    assert(heater_control_latest(&private_sample) && private_sample.valid_mask == 15);
+    // An explicit zero-duty START records; STOP closes that run and idle
+    // samples keep the safety state fresh without growing the output queue.
+    const heater_command_t start_zero = {.kind = HEATER_COMMAND_START};
+    const heater_command_t stop_zero = {.kind = HEATER_COMMAND_STOP};
+    assert(heater_control_submit(&start_zero) == ESP_OK);
+    const uint32_t first_run = heater_control_run_state().id;
+    task_waits = 0; task_frame_limit = 3; drive_task = true;
+    if (setjmp(task_escape) == 0) control_task(NULL);
+    drive_task = false;
+    assert(sent_messages == 3 && last_message.run_id == first_run);
+    assert(heater_control_submit(&stop_zero) == ESP_OK);
+    task_waits = 0; task_frame_limit = 3; drive_task = true;
+    if (setjmp(task_escape) == 0) control_task(NULL);
+    drive_task = false;
+    assert(sent_messages == 3 && !heater_control_run_state().running);
+    assert(heater_control_submit(&start_zero) == ESP_OK);
+    assert(heater_control_run_state().id != first_run);
+
     // Real-board timings: 24 us to wake the task, 34 us per software-CS START.
     // The old 100 us window stopped before ADC4 and invalidated all readings.
-    reset();
+    reset_recording();
     adc_start_time_us = 34;
     fire(0);
     while (s_control.next_phase != PHASE_CONVERT) fire(0);
@@ -204,7 +241,7 @@ int main(void)
     assert(last_message.data.valid_mask == 15 && last_message.data.faults == 0);
 
     // A command that starts in time but finishes too late must still be rejected.
-    reset();
+    reset_recording();
     fire(0);
     while (s_control.next_phase != PHASE_CONVERT) fire(0);
     fire(0);
@@ -212,8 +249,8 @@ int main(void)
     start_conversion(s_control.sequence);
     assert(s_control.started_mask == 0 && (s_control.faults & HEATER_FAULT_TIMING));
 
-    reset();
-    heater_command_t set = {.kind = HEATER_COMMAND_SET, .duty = {1, 25, 50, 95}};
+    reset_recording();
+    heater_command_t set = {.kind = HEATER_COMMAND_START, .duty = {1, 25, 50, 95}};
     assert(heater_control_submit(&set) == ESP_OK);
     fire(0);
     assert(!heat_request); // A command alone does not bypass initial measurement.
@@ -244,7 +281,7 @@ int main(void)
     assert(!heat_request && (s_control.faults & HEATER_FAULT_STOPPED));
 
     // Missing one converter inhibits only that channel after the next frame.
-    reset();
+    reset_recording();
     assert(heater_control_submit(&set) == ESP_OK);
     fire(0);
     heater_telemetry_t partial = frame();
@@ -262,7 +299,7 @@ int main(void)
     assert(pwm[0] == 1 && pwm[1] == 25 && pwm[2] == 50 && pwm[3] == 0);
 
     // Malformed/saturated data is a sample fault, not a DRDY timeout.
-    reset();
+    reset_recording();
     fire(0);
     heater_telemetry_t bad_sample = frame();
     reach_conversion();
@@ -279,7 +316,7 @@ int main(void)
     assert(!(bad_sample.faults & HEATER_FAULT_ADC_TIMEOUT));
 
     // USB backpressure never prevents hardware measurement cutoff.
-    reset();
+    reset_recording();
     fire(0);
     heater_telemetry_t dropped = frame();
     reach_conversion();
@@ -292,20 +329,20 @@ int main(void)
     assert(s_control.alarm.alarm_count == 39900);
 
     // An IRQ arriving several frames late must schedule a future alarm.
-    reset();
+    reset_recording();
     fire(45000);
     assert(s_control.phase == PHASE_ABORT && s_control.alarm.alarm_count == 80000);
     assert(!heat_request && !measure_request);
     assert(s_control.deadline_misses == 1);
     // A callback that enters on time can also overrun its next phase.
-    reset();
+    reset_recording();
     fire(0);
     driver_time_us = 150;
     fire(0);
     assert(s_control.phase == PHASE_ABORT && !heat_request);
     assert(s_control.alarm.alarm_count > fake_now);
     // Even an unexpectedly long callback must not schedule an expired alarm.
-    reset();
+    reset_recording();
     fire(0);
     driver_time_us = 50000;
     fire(0);
@@ -314,7 +351,7 @@ int main(void)
 
     // If the control task never finishes a frame, cached healthy readings
     // cannot keep heating enabled at the next boundary.
-    reset();
+    reset_recording();
     s_control.healthy_mask = 15;
     s_control.bootstrap_ready = true;
     assert(heater_control_submit(&set) == ESP_OK);
@@ -325,7 +362,7 @@ int main(void)
     assert(!heat_request && (s_control.faults & HEATER_FAULT_TIMING));
 
     // Exercise the real notification loop over two complete frames.
-    reset();
+    reset_recording();
     assert(heater_control_submit(&set) == ESP_OK);
     drive_task = true;
     if (setjmp(task_escape) == 0) control_task(NULL);
@@ -335,12 +372,12 @@ int main(void)
     assert(last_message.data.valid_mask == 15 && last_message.data.faults == 0);
     assert(memcmp(last_message.data.duty, set.duty, 4) == 0);
 
-    // A SET renewed by PING holds through 3001 notification-loop frames (>60 s).
+    // A START renewed by PING holds through 3001 notification-loop frames (>60 s).
     reset();
     const heater_command_t ping = {.kind = HEATER_COMMAND_PING};
     assert(heater_control_submit(&ping) == ESP_OK);
     assert(!heat_request && !s_control.command_active);
-    const heater_command_t hold = {.kind = HEATER_COMMAND_SET, .duty = {5, 5, 5, 5}};
+    const heater_command_t hold = {.kind = HEATER_COMMAND_START, .duty = {5, 5, 5, 5}};
     assert(heater_control_submit(&hold) == ESP_OK);
     task_frame_limit = 3001;
     check_hold = drive_task = true;
@@ -366,7 +403,7 @@ int main(void)
     fire(0); // Next frame applies STOP's zero duty.
     assert(!heat_request && memcmp(pwm, zero_duty, 4) == 0);
     // Lease expiry runs in the phase ISR even if the network tasks are blocked.
-    reset();
+    reset_recording();
     assert(heater_control_submit(&set) == ESP_OK);
     const uint64_t expiry = s_control.lease_deadline_us;
     s_control.next_cycle_start_us = expiry;
@@ -378,7 +415,7 @@ int main(void)
 
     // Maintenance acknowledgements execute the real task branch, then prohibit
     // GPIO phase activity, ADC starts and SET/PING until an explicit resume.
-    reset();
+    reset_recording();
     assert(heater_control_submit(&set) == ESP_OK);
     fire(0);
     reach_conversion();

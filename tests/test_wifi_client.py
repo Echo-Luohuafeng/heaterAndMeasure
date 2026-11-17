@@ -44,7 +44,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urlsplit(self.path)
         if parsed.path == "/api/status":
-            self.send_json({"boot_id": self.boot, "maintenance": False, "latest": FRAME,
+            self.send_json({"boot_id": self.boot, "maintenance": False, "running": True, "latest": FRAME,
                             "store": {"oldest": 1, "next": 2}})
         else:
             cursor = int(parse_qs(parsed.query)["from"][0])
@@ -91,7 +91,7 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(len(rows), 2)
             self.assertEqual(rows[1][:4], ["boot", "1", "7", "20000"])
             self.assertEqual(rows[1][9], "")  # invalid channel is blank in CSV
-            self.assertEqual(Handler.commands[0], "SET 1 2 3 4")
+            self.assertEqual(Handler.commands[0], "START 1 2 3 4")
             self.assertIn("PING", Handler.commands)
             self.assertEqual(Handler.commands[-1], "STOP")
             Handler.commands.clear()
@@ -121,7 +121,7 @@ class ClientTests(unittest.TestCase):
             with path.open() as stream:
                 rows = list(csv.DictReader(stream))
         self.assertEqual([row["boot_id"] for row in rows], ["boot", "new-boot"])
-        self.assertEqual(sum(command.startswith("SET") for command in Handler.commands), 1)
+        self.assertEqual(sum(command.startswith("START") for command in Handler.commands), 1)
         self.assertEqual(Handler.commands[-1], "STOP")
 
 

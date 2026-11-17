@@ -7,6 +7,11 @@
 
 int main(void)
 {
+    heater_command_t started;
+    assert(heater_command_parse("START 0 1 2 95", 14, &started));
+    assert(started.kind == HEATER_COMMAND_START && started.duty[3] == 95);
+    assert(!heater_command_parse("START 0 1 2", 11, &started));
+    assert(!heater_command_parse("START 0 1 2 96", 14, &started));
     heater_command_t command = {.kind = HEATER_COMMAND_SET, .duty = {1, 2, 3, 4}};
     const char *valid[] = {"SET 0 95 10 20", " \tSET\t1 2 3 4\r", "STOP", " PING\r"};
     for (size_t i = 0; i < sizeof(valid) / sizeof(valid[0]); ++i) {

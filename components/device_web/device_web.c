@@ -124,6 +124,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     network_status_t network;
     network_manager_status(&network);
     const heater_timing_stats_t timing = heater_control_timing_stats();
+    const heater_run_state_t run = heater_control_run_state();
     telemetry_stats_t stats = telemetry_store_stats();
     telemetry_record_t record;
     uint64_t next, lost;
@@ -138,12 +139,14 @@ static esp_err_t status_handler(httpd_req_t *req)
     char output[1600];
     snprintf(output, sizeof(output),
         "{\"boot_id\":\"%s\",\"version\":\"%s\",\"verified\":%s,\"lease_ms\":%d,"
+        "\"running\":%s,\"recording\":%s,\"run_id\":%u,"
         "\"control_ready\":%s,\"control_init_error\":%d,\"maintenance\":%s,\"network\":{\"connected\":%s,\"ap\":%s,\"ip\":\"%s\",\"rssi\":%d,\"ap_ssid\":\"%s\"},"
         "\"store\":{\"psram\":%s,\"capacity\":%u,\"oldest\":%" PRIu64 ",\"next\":%" PRIu64 ",\"overwritten\":%" PRIu64 "},"
         "\"ota\":{\"active\":%s,\"total\":%u,\"received\":%u,\"error\":%d},"
         "\"free_internal_bytes\":%u,\"min_internal_bytes\":%u,\"http_stack_free_bytes\":%u,"
         "\"timing\":{\"adc_start_max_offset_us\":%u,\"adc_start_misses\":%u,\"adc_read_misses\":%u},\"latest\":%s}",
         s_boot_id, esp_app_get_description()->version, verified ? "true" : "false", CONFIG_HEATER_CONTROL_LEASE_MS,
+        run.running ? "true" : "false", run.running ? "true" : "false", (unsigned)run.id,
         s_control_init_result == ESP_OK ? "true" : "false", s_control_init_result,
         heater_control_is_maintenance() ? "true" : "false", network.connected ? "true" : "false",
         network.ap_active ? "true" : "false", network.address, network.rssi, network.ap_ssid,
@@ -202,23 +205,30 @@ static esp_err_t command_handler(httpd_req_t *req)
     heater_command_t command;
     if (!heater_command_parse(body, req->content_len, &command))
         return respond(req, "400 Bad Request", "{\"error\":\"INVALID_COMMAND\"}");
-    if (!verified() && command.kind == HEATER_COMMAND_SET)
-        return respond(req, "409 Conflict", "{\"error\":\"SELF_TEST_PENDING\"}");
-    if (heater_control_submit(&command) != ESP_OK)
-        return respond(req, "409 Conflict", "{\"error\":\"MAINTENANCE\"}");
-    return respond(req, "200 OK", command.kind == HEATER_COMMAND_SET ? "{\"ack\":\"SET\"}" :
-        command.kind == HEATER_COMMAND_STOP ? "{\"ack\":\"STOP\"}" : "{\"ack\":\"PING\"}");
-}
-
-static esp_err_t resume_handler(httpd_req_t *req)
-{
-    if (!authorized(req)) return ESP_OK;
-    if (!verified() || xSemaphoreTake(s_operation, 0) != pdTRUE)
+    if (command.kind == HEATER_COMMAND_STOP) {
+        if (heater_control_submit(&command) != ESP_OK)
+            return respond(req, "409 Conflict", "{\"error\":\"CONTROL_UNAVAILABLE\"}");
+        telemetry_store_sync_stop();
+        return respond(req, "200 OK", "{\"ack\":\"STOP\"}");
+    }
+    if (!verified()) return respond(req, "409 Conflict", "{\"error\":\"SELF_TEST_PENDING\"}");
+    if (xSemaphoreTake(s_operation, 0) != pdTRUE)
         return respond(req, "409 Conflict", "{\"error\":\"BUSY\"}");
-    const esp_err_t result = heater_control_resume();
+    const uint64_t next = telemetry_store_stats().next;
+    esp_err_t result = ESP_OK;
+    if (command.kind == HEATER_COMMAND_START && heater_control_is_maintenance())
+        result = heater_control_resume();
+    if (result == ESP_OK) result = heater_control_submit(&command);
+    const heater_run_state_t run = heater_control_run_state();
     xSemaphoreGive(s_operation);
-    return respond(req, result == ESP_OK ? "200 OK" : "409 Conflict",
-                   result == ESP_OK ? "{\"ack\":\"RESUMED_ZERO_DUTY\"}" : "{\"error\":\"RESUME_FAILED\"}");
+    if (result != ESP_OK) return respond(req, "409 Conflict", "{\"error\":\"CONTROL_UNAVAILABLE\"}");
+    if (command.kind == HEATER_COMMAND_START) {
+        char reply[128];
+        snprintf(reply, sizeof(reply), "{\"ack\":\"START\",\"run_id\":%u,\"next\":%" PRIu64 "}",
+                 (unsigned)run.id, next);
+        return respond(req, "200 OK", reply);
+    }
+    return respond(req, "200 OK", command.kind == HEATER_COMMAND_SET ? "{\"ack\":\"SET\"}" : "{\"ack\":\"PING\"}");
 }
 
 static esp_err_t reboot_handler(httpd_req_t *req)
@@ -356,7 +366,7 @@ static void ota_worker(void *arg)
     s_ota.error = result; s_ota.active = false;
     portEXIT_CRITICAL(&s_lock);
     if (result == ESP_OK) respond(req, "200 OK", "{\"ack\":\"OTA\",\"reboot\":true}");
-    else respond(req, "400 Bad Request", "{\"error\":\"OTA_FAILED\",\"resume_required\":true}");
+    else respond(req, "400 Bad Request", "{\"error\":\"OTA_FAILED\",\"start_required\":true}");
     httpd_req_async_handler_complete(req);
     ESP_LOGI(TAG, "OTA result: %s; worker stack free: %u bytes", esp_err_to_name(result),
              (unsigned)uxTaskGetStackHighWaterMark(NULL));
@@ -420,7 +430,7 @@ static void verify_task(void *arg)
     uint32_t sequence = 0;
     for (unsigned i = 0; s_control_init_result == ESP_OK && i < 100 && good < 10; ++i) {
         heater_telemetry_t latest;
-        if (telemetry_store_latest(&latest) && latest.sequence != sequence) {
+        if (heater_control_latest(&latest) && latest.sequence != sequence) {
             sequence = latest.sequence;
             good = latest.valid_mask == 15 && !(latest.faults & (HEATER_FAULT_TIMING | HEATER_FAULT_SPI | HEATER_FAULT_PWM)) ? good + 1 : 0;
         }
@@ -452,7 +462,7 @@ esp_err_t device_web_start(esp_err_t control_init_result)
     config.core_id = 0;
     config.task_priority = 4;
     config.stack_size = 10240;
-    config.max_uri_handlers = 9;
+    config.max_uri_handlers = 8;
     config.max_open_sockets = 6;
     config.recv_wait_timeout = 2;
     config.send_wait_timeout = 1;
@@ -464,7 +474,6 @@ esp_err_t device_web_start(esp_err_t control_init_result)
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_handler},
         {.uri = "/api/data", .method = HTTP_GET, .handler = data_handler},
         {.uri = "/api/control", .method = HTTP_POST, .handler = command_handler},
-        {.uri = "/api/resume", .method = HTTP_POST, .handler = resume_handler},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_handler},
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_handler},
         {.uri = "/api/ota", .method = HTTP_POST, .handler = ota_handler},

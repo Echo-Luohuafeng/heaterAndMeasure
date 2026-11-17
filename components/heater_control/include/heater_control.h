@@ -7,9 +7,13 @@
 
 esp_err_t heater_control_init(QueueHandle_t outbound);
 esp_err_t heater_control_start(void);
-// SET is latched at the next frame boundary; STOP removes heat immediately.
-// SET/PING renew the control lease; expiry cancels heating but keeps measuring.
+// START enables heating and recording. SET stages/updates duties, without
+// starting an idle run. STOP/lease expiry stop heating and history recording.
 esp_err_t heater_control_submit(const heater_command_t *command);
+typedef struct { bool running; uint32_t id; } heater_run_state_t;
+heater_run_state_t heater_control_run_state(void);
+// Latest private safety/self-test sample, independent of PSRAM history.
+bool heater_control_latest(heater_telemetry_t *frame);
 // A successful pause acknowledges that the timer and all ADC transfers stopped.
 // Timeout leaves outputs inhibited. Flash writes must wait for ESP_OK.
 esp_err_t heater_control_pause(TickType_t timeout);

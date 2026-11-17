@@ -13,7 +13,7 @@ VS Code ESP-IDF 扩展和当前 Dev Container。Flash 16 MB，PSRAM 按 Octal 80
 ## 模块与任务
 
 `heater_board` 管理引脚和 MCPWM；`ads1220` 管理 SPI 与 ADC；
-`heater_control` 执行阶段调度、采样和控制租约；`heater_protocol` 解析命令与换算。
+`heater_control` 执行阶段调度、后台安全采样、显式运行控制和控制租约；`heater_protocol` 解析命令与换算。
 `telemetry_store` 从内部 RAM 队列取样，写入 4 MiB PSRAM 环形缓存，
 PSRAM 不可用时降级为 32 KiB 内部 RAM；`network_manager` 管理配网和重连；
 `device_web` 提供网页、HTTP/WebSocket 与 OTA；`host_link` 仅提供 USB STOP/PING。
@@ -122,7 +122,9 @@ Recovery AP: Heater-xxxxxx; AP password / API token: <设备生成的32位口令
 
 ## 数据缓存与 HTTP API
 
-控制任务仍每 20 ms 非阻塞提交完整采样，内部队列为 32 条。
+上电默认不加热、不写入历史缓存。控制任务保留每 20 ms 的后台安全检测，
+以便检查通道健康和完成 OTA 启动自检；这些空闲样本只用于内部检查，不进入 PSRAM 历史。
+显式 START 后才每 20 ms 非阻塞提交完整采样，内部队列为 32 条。
 缓存任务及时取样，网络每秒发送通常约 50 帧；有积压时单批最多 100 帧。
 按约 64 字节/记录估算，4 MiB 能保留约 22 分钟，32 KiB 降级缓存约 10 秒，
 实际容量以 `/api/status` 为准。满缓存覆盖最旧记录并计数，队列满则记录丢帧。
@@ -133,8 +135,7 @@ Recovery AP: Heater-xxxxxx; AP password / API token: <设备生成的32位口令
 | `GET /` | 随固件打包的网页 |
 | `GET /api/status` | 启动 ID、版本、网络、缓存、维护/OTA、栈/内存和最近采样 |
 | `GET /api/data?from=1&limit=250&boot=<boot_id>` | 从游标读取，limit 为 1–250；from=0 从最旧记录开始 |
-| `POST /api/control` | `text/plain` 命令 SET / PING / STOP，立即回复 |
-| `POST /api/resume` | 维护后恢复零占空比采样，不恢复旧 SET |
+| `POST /api/control` | `text/plain` 命令 START / SET / PING / STOP，立即回复 |
 | `POST /api/reboot` | 确认输出关闭后重启，例如修复 ADC 接线后重新初始化 |
 | `POST /api/wifi` | 表单 `ssid=...&password=...`，保存后重启 |
 | `POST /api/ota` | 原始应用 `.bin` 字节流，成功后重启 |
@@ -170,21 +171,27 @@ HTTP 的 boot 参数变化会返回 `BOOT_CHANGED`；客户端必须按 boot_id 
 | 2 | 未收到/读完全部 ADC |
 | 4 | SPI 失败 |
 | 8 | 饱和、非正值或超出合理范围的电阻 |
-| 16 | 控制租约到期，保持停热至下一次 SET/STOP |
+| 16 | 控制租约到期，保持停热至下一次 START/STOP |
 | 32 | 当前周期收到 STOP |
 | 64 | PWM 失败，加热锁定至重启 |
 
 ## 控制与 OTA
 
-`SET 5 5 5 5` 设置四路 0–95 整数，下一周期统一生效；
-`PING` 仅为已有 SET 续约，不启动加热；`STOP` 立即取消设定并关闭加热。
-SET/PING 默认续约 5 秒，控制端应每秒 PING。到期停热，采样和缓存继续。
+`SET 2 2 2 2` 只设置四路 0–95 整数：空闲时不启动加热或记录，运行时下一周期生效。
+`START 2 2 2 2` 显式开始加热与记录；`START 0 0 0 0` 可用于零占空比测量记录。
+`PING` 仅为已有运行续约，不启动空闲任务；`STOP` 立即取消运行、关闭加热并停止历史写入。
+START 及运行中的 SET/PING 默认续约 5 秒，到期停热并停止记录。
+已有历史保留供查看和导出，每次 START 使用新的运行 ID，旧队列数据不混入新运行。
 STA 断开或热点客户端断开也取消加热；重连不会恢复 SET。
-网页隐藏、关闭或控制连接中断时停止续约并尝试 STOP，设备租约仍是最终保护。
+网页提供“开始加热”“应用四路设定”“加热保持”和“停止加热与记录”。
+默认不勾选加热保持；只有开始运行后勾选才每秒 PING。已有运行也可通过勾选保持续约。
+取消勾选停止续约，租约到期后停止；停止按钮立即停止。勾选本身不启动空闲设备。
+保持功能在页面可运行、网络连接正常时有效；页面隐藏时仍尝试心跳，关闭时尝试 STOP。
+浏览器挂起或网络断开后，设备仍按租约停热，页面不能保证后台永久运行。
 
 上电设定为零，每路只有前一周期有效测量才允许加热；失效通道下一周期输出为零。
 默认有效范围 90–180 Ω；全局时序异常取消全部许可。
-USB 不再持续发送 DATA，保留日志与 STOP/PING，USB SET 回复 `ERR,USE_WIFI`。
+USB 不再持续发送 DATA，保留日志与 STOP/PING，USB SET/START 回复 `ERR,USE_WIFI`。
 旧 `tools/heater_monitor.py` 适用于历史 USB 固件，当前使用 `heater_wifi.py`。
 
 ADC 寄存器验证等初始化失败时，输出关闭并进入恢复模式，网页、配网和 OTA
@@ -201,14 +208,14 @@ bootloader 或分区表。每次发行建议更新根 CMakeLists.txt 中的 PROJ
 OTA 进入维护状态，清除 SET、关闭请求与 PWM，控制任务停止 GPTimer 和 ADC
 操作后发出确认，收到确认才写 Flash。上传使用内部 RAM 4 KiB 缓冲，检查尺寸、
 ESP32-S3 芯片标记及工程名，结束时由 IDF 校验镜像，再切换启动分区。
-上传/校验失败保留原启动分区，维持停热，用户显式恢复零占空比采样。
+上传/校验失败保留原启动分区，维持停热，用户通过“开始加热”显式恢复控制任务并开始新运行。
 异步 OTA 接收不占用 HTTP 服务主循环，上传时可读取状态和进度。
 
 初次 USB 启动在 OTA 状态中登记有效基线。从采样正常版本进行 OTA，要求新版本
 在约 10 秒内检测到十次连续健康采样快照后确认，失败则回滚；从 ADC 初始化失败的
 恢复模式升级，允许新版本保留网络恢复模式，以便没有测量板时也能开发 OTA。
 本次升级是否要求采样自检保存在 NVS，断电后仍有效。正常路由器离线不影响版本确认。
-OTA 状态写入同样暂停控制，确认后恢复零占空比采样。任务看门狗触发重启以支持
+OTA 状态写入同样暂停控制，确认后恢复空闲安全检测，等待显式 START。任务看门狗触发重启以支持
 启动卡死回滚。当前已确认版本的测量异常由通道保护处理，仍允许 OTA 修复。
 
 ## 构建与上位机使用
@@ -232,18 +239,19 @@ Python 工具只依赖标准库；口令从交互输入、HEATER_TOKEN 环境变
 
 ```bash
 python tools/heater_wifi.py --url http://192.168.1.50 status
-python tools/heater_wifi.py --url http://192.168.1.50 monitor --seconds 10 --csv baseline.csv
+python tools/heater_wifi.py --url http://192.168.1.50 monitor --duty 0 0 0 0 --seconds 10 --csv baseline.csv
 python tools/heater_wifi.py --url http://192.168.1.50 monitor --history --seconds 10 --csv history.csv
 python tools/heater_wifi.py --url http://192.168.1.50 monitor --duty 2 2 2 2 --seconds 5 --csv heated.csv
 python tools/heater_wifi.py --url http://192.168.1.50 ota build/default/heater_and_measure.bin
-python tools/heater_wifi.py --url http://192.168.1.50 resume
 python tools/heater_wifi.py --url http://192.168.1.50 reboot
 ```
 
 采集工具每秒请求新数据，有积压时加快补传，CSV 落盘后推进游标。
-未提供 --duty 不发加热命令；提供后只发送一次 SET，并每秒 PING，结束尝试 STOP。
-连接中断后只恢复数据采集，不重发 SET；重启数据带新的 boot_id。
-恢复采样不恢复旧加热设定。
+未提供 --duty 只读取已有运行或历史，不开始记录；提供后发送一次 START，
+包括全零占空比，并每秒 PING，结束时发送 STOP。
+连接中断后只恢复数据读取，不重发 START；重启数据带新的 boot_id。
+旧 /api/resume 和 CLI resume 入口已移除。原恢复操作用于 OTA 失败后的任务恢复，
+现在由 START 承接；内部暂停/恢复仍供 OTA 和启动确认使用。
 
 ## 校准与实板验证
 
@@ -266,7 +274,7 @@ PWM 低侧充电、自举电压、15000 µs 关断、PhotoMOS 通断和采样窗
 
 ## 已完成的实板检查（2026-11-17）
 
-当前固件版本 `2.0.8-wifi`，本次设备网页地址为 `http://10.0.0.109/`。
+以下 1226 帧实板测试使用 `2.0.8-wifi`；当前运行控制版本为 `2.1.2-wifi`。设备网页地址为 `http://10.0.0.109/`。
 设备口令与原 Flash 备份仅保存在被忽略的 `build/default/`，不进入仓库。
 
 - ESP32-S3 rev 0.2、Flash 16 MB、PSRAM 8 MB；80 MHz PSRAM 启动读写测试通过，缓存 65536 条。
@@ -279,3 +287,11 @@ PWM 低侧充电、自举电压、15000 µs 关断、PhotoMOS 通断和采样窗
 
 原始记录为 `build/default/heater-test-max2.csv`，汇总为 `build/default/heater-test-max2.json`。
 此结果覆盖当前接线与短时测试条件，不代替不同供电、负载、网络环境下的时序与模拟精度验证。
+
+## 显式开始与加热保持验证
+
+`2.1.2-wifi` 已验证上电空闲、SET 不启动、START 后记录、持续心跳保持运行、
+停止心跳后租约到期冻结历史、STOP 后缓存不再增长，以及新的运行 ID 排除旧队列样本。
+已删除页面恢复按钮及旧 `/api/resume`；OTA 失败后可通过 START 恢复控制并开始新段。
+实板保持测试记录 428 帧，四路全部有效，测试最大占空比为 1，结束保持不加热、不记录。
+结果保存在 `build/default/run-ui-validation.json`。

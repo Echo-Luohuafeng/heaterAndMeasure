@@ -3,6 +3,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_psram.h"
+#include "heater_control.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
@@ -43,9 +44,17 @@ static void store_task(void *arg)
         if (xQueueReceive(samples, &message, portMAX_DELAY) != pdPASS) continue;
         if (message.kind != HEATER_MESSAGE_DATA) continue;
         xSemaphoreTake(s_lock, portMAX_DELAY);
-        telemetry_ring_push(&s_ring, &message.data);
+        const heater_run_state_t run = heater_control_run_state();
+        if (telemetry_message_recordable(&message, run.running, run.id))
+            telemetry_ring_push(&s_ring, &message.data);
         xSemaphoreGive(s_lock);
     }
+}
+
+void telemetry_store_sync_stop(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    xSemaphoreGive(s_lock);
 }
 
 esp_err_t telemetry_store_start(QueueHandle_t samples)

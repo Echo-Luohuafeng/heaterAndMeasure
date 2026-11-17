@@ -80,6 +80,10 @@ typedef struct {
     uint8_t desired[HEATER_CHANNEL_COUNT];
     uint8_t applied[HEATER_CHANNEL_COUNT];
     bool command_active;
+    uint32_t run_id;
+    uint32_t frame_run_id;
+    bool latest_present;
+    heater_telemetry_t latest;
     bool bootstrap_ready;
     bool pwm_failed;
     uint8_t healthy_mask;
@@ -183,6 +187,7 @@ static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_ev
                 s_control.host_timeout = true;
                 memset(s_control.desired, 0, sizeof(s_control.desired));
             }
+            s_control.frame_run_id = s_control.command_active ? s_control.run_id : 0;
             s_control.faults = (s_control.pwm_failed ? HEATER_FAULT_PWM : 0) |
                 (s_control.host_timeout ? HEATER_FAULT_HOST_TIMEOUT : 0);
             const bool previous_done = s_control.healthy_sequence == s_control.sequence - 1;
@@ -451,7 +456,19 @@ static void publish(heater_telemetry_t *frame, bool aborted, uint8_t read_mask)
         }
     }
     frame->control_stack_free_bytes = uxTaskGetStackHighWaterMark(NULL);
-    const heater_message_t message = {.kind = HEATER_MESSAGE_DATA, .data = *frame};
+    portENTER_CRITICAL(&s_control.lock);
+    if (s_control.sequence != frame->sequence) {
+        portEXIT_CRITICAL(&s_control.lock);
+        return;
+    }
+    s_control.latest = *frame;
+    s_control.latest_present = true;
+    const bool record = s_control.command_active && s_control.frame_run_id != 0 &&
+                        s_control.frame_run_id == s_control.run_id;
+    const uint32_t run_id = s_control.frame_run_id;
+    portEXIT_CRITICAL(&s_control.lock);
+    if (!record) return;
+    const heater_message_t message = {.kind = HEATER_MESSAGE_DATA, .run_id = run_id, .data = *frame};
     if (xQueueSend(s_control.outbound, &message, 0) != pdPASS) {
         portENTER_CRITICAL(&s_control.lock);
         ++s_control.telemetry_drops;
@@ -585,7 +602,7 @@ esp_err_t heater_control_submit(const heater_command_t *command)
         heater_board_requests_off();
         return heater_board_pwm_low() ? ESP_OK : ESP_FAIL;
     }
-    if (command->kind == HEATER_COMMAND_SET) {
+    if (command->kind == HEATER_COMMAND_SET || command->kind == HEATER_COMMAND_START) {
         for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
             if (command->duty[i] > HEATER_MAX_DUTY) {
                 return ESP_ERR_INVALID_ARG;
@@ -609,16 +626,39 @@ esp_err_t heater_control_submit(const heater_command_t *command)
         heater_board_pwm_low();
         s_control.host_timeout = false;
         s_control.faults |= HEATER_FAULT_STOPPED;
-    } else if (command->kind == HEATER_COMMAND_SET) {
+    } else if (command->kind == HEATER_COMMAND_SET || command->kind == HEATER_COMMAND_START) {
         memcpy(s_control.desired, command->duty, sizeof(s_control.desired));
-        s_control.command_active = true;
-        s_control.host_timeout = false;
-        s_control.lease_deadline_us = now + (uint64_t)CONFIG_HEATER_CONTROL_LEASE_MS * 1000;
+        if (command->kind == HEATER_COMMAND_START) {
+            if (++s_control.run_id == 0) ++s_control.run_id;
+            s_control.command_active = true;
+        }
+        if (s_control.command_active) {
+            s_control.host_timeout = false;
+            s_control.lease_deadline_us = now + (uint64_t)CONFIG_HEATER_CONTROL_LEASE_MS * 1000;
+        }
     } else if (s_control.command_active) {
         s_control.lease_deadline_us = now + (uint64_t)CONFIG_HEATER_CONTROL_LEASE_MS * 1000;
     }
     portEXIT_CRITICAL(&s_control.lock);
     return ESP_OK;
+}
+
+heater_run_state_t heater_control_run_state(void)
+{
+    portENTER_CRITICAL(&s_control.lock);
+    const heater_run_state_t state = {.running = s_control.command_active && !s_control.maintenance,
+                                      .id = s_control.run_id};
+    portEXIT_CRITICAL(&s_control.lock);
+    return state;
+}
+
+bool heater_control_latest(heater_telemetry_t *frame)
+{
+    portENTER_CRITICAL(&s_control.lock);
+    const bool present = s_control.latest_present;
+    if (present) *frame = s_control.latest;
+    portEXIT_CRITICAL(&s_control.lock);
+    return present;
 }
 
 bool heater_control_is_paused(void)

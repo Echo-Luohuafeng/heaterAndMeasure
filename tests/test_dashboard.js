@@ -9,11 +9,11 @@ const source = html.split('<script>')[1].split('</script>')[0];
 const elements = new Map(), listeners = {}, timers = [], requests = [], sockets = [], blobs = [];
 const TOKEN = '0123456789abcdef0123456789abcdef';
 const FRAME = [1, 7, 20000, [5, 0, 0, 0], [100, null, 120, 130], 13, 2, 0, 0, 2048];
-const status = {boot_id:'test', version:'2.0.0-wifi', verified:true, maintenance:false,
+const status = {boot_id:'test', version:'2.1.0-wifi', verified:true, maintenance:false,running:false,recording:false,
  network:{ip:'192.168.4.1',rssi:-45}, store:{psram:true,oldest:1,next:2,capacity:65536,overwritten:0},
  ota:{active:false,error:0},free_internal_bytes:100000};
 class Element {
- constructor(){this.value='';this.children=[];this.clientWidth=900;this.files=[];this.textContent='';}
+ constructor(){this.value='';this.children=[];this.clientWidth=900;this.files=[];this.textContent='';this.checked=false;}
  set id(value){this._id=value;elements.set(value,this);} get id(){return this._id;}
  append(child){this.children.push(child);} click(){if(this.onclick)this.onclick();}
  getContext(){return new Proxy({}, {get:()=>()=>{}});}
@@ -26,7 +26,9 @@ const context = vm.createContext({document,window:{devicePixelRatio:1,addEventLi
  confirm:()=>true,setTimeout:()=>1,clearTimeout(){},setInterval(fn){timers.push(fn);},
  WebSocket:class {constructor(url){this.url=url;sockets.push(this);}close(){}},
  async fetch(url,options){requests.push({url,...options});assert.equal(options.headers.Authorization,'Bearer '+TOKEN);
-  const body=url.startsWith('/api/status')?status:url.startsWith('/api/data')?
+  if(options.body?.startsWith?.('START')){status.running=true;status.recording=true;status.maintenance=false;}
+  if(options.body==='STOP'){status.running=false;status.recording=false;}
+  const body=options.body?.startsWith?.('START')?{ack:'START',run_id:1,next:1}:url.startsWith('/api/status')?status:url.startsWith('/api/data')?
    {schema:1,boot_id:'test',next:2,lost:0,more:false,frames:[FRAME]}:{ack:'OK'};
   return {ok:true,json:async()=>structuredClone(body)};
  }});
@@ -38,21 +40,32 @@ async function run(){
  assert.match(element('r0').textContent,/100\.0000/);assert.equal(element('r1').textContent,'无效');
  element('duty0').value='5.5';await element('set').onclick();assert.match(element('message').textContent,/整数/);
  assert(!requests.some(r=>r.body?.startsWith?.('SET')));
+ const pingCount=()=>requests.filter(r=>r.body==='PING').length;
+ element('hold').checked=true;await element('hold').onchange();assert.equal(pingCount(),0);
  element('duty0').value='5';await element('set').onclick();assert.equal(requests.at(-1).body,'SET 5 0 0 0');
- await timers[0]();assert.equal(requests.at(-1).body,'PING');
- document.hidden=true;listeners.visibilitychange();await new Promise(setImmediate);assert.equal(requests.at(-1).body,'STOP');
- const count=requests.length;await timers[0]();assert.equal(requests.length,count);document.hidden=false;
+ await timers[0]();assert.equal(pingCount(),0);assert.equal(status.running,false);
+ element('hold').checked=false;await element('start').onclick();await new Promise(setImmediate);
+ assert(requests.some(r=>r.body==='START 5 0 0 0'));assert.equal(status.running,true);
+ await timers[0]();assert.equal(pingCount(),0);
+ element('hold').checked=true;await element('hold').onchange();assert.equal(pingCount(),1);
+ await timers[0]();assert.equal(pingCount(),2);
+ document.hidden=true;await timers[0]();assert.equal(pingCount(),3);document.hidden=false;
+ element('hold').checked=false;await element('hold').onchange();await timers[0]();assert.equal(pingCount(),3);
  await element('csv').onclick();assert.equal(blobs.length,1);const csv=await blobs[0].text();
  assert.match(csv,/test,1,7,20000,5,0,0,0,100,,120,130,13,2,0,0,2048/);
  await element('stop').onclick();assert.equal(requests.at(-1).body,'STOP');
+ element('hold').checked=true;await element('hold').onchange();await timers[0]();assert.equal(pingCount(),3);
+ status.running=true;status.recording=true;await timers[0]();assert.equal(pingCount(),4);
+ await element('stop').onclick();
  status.store.next=3000;await element('connect').onclick();
  assert.match(sockets.at(-1).url,/from=2950/); // new viewers start at live data
  await new Promise(setImmediate);
  status.control_ready=false;status.control_init_error=263;status.maintenance=true;
  await vm.runInContext('poll()',context);
- assert.equal(element('set').disabled,true);assert.equal(element('resume').disabled,true);
+ assert.equal(element('set').disabled,true);assert.equal(element('start').disabled,true);
+ assert(!html.includes('id="resume"'));
  assert.match(element('diagnostics').textContent,/采样初始化失败/);
  await element('reboot').onclick();assert.equal(requests.at(-1).url,'/api/reboot');
- console.log('Dashboard initialization, invalid input, SET/PING/STOP, hidden-tab stop and CSV tests passed');
+ console.log('Dashboard explicit START, staged SET, opt-in heartbeat, hidden-tab heartbeat, STOP and CSV tests passed');
 }
 run().catch(error=>{console.error(error);process.exitCode=1;});

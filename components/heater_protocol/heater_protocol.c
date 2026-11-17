@@ -27,11 +27,14 @@ bool heater_command_parse(const char *line, size_t length, heater_command_t *com
     } else if (length == 4 && memcmp(line, "PING", 4) == 0) {
         parsed.kind = HEATER_COMMAND_PING;
     } else {
-        if (length < 4 || memcmp(line, "SET", 3) != 0 || !is_space(line[3])) {
-            return false;
-        }
-        parsed.kind = HEATER_COMMAND_SET;
-        size_t position = 3;
+        size_t position;
+        if (length >= 4 && memcmp(line, "SET", 3) == 0 && is_space(line[3])) {
+            parsed.kind = HEATER_COMMAND_SET;
+            position = 3;
+        } else if (length >= 6 && memcmp(line, "START", 5) == 0 && is_space(line[5])) {
+            parsed.kind = HEATER_COMMAND_START;
+            position = 5;
+        } else return false;
         for (size_t channel = 0; channel < HEATER_CHANNEL_COUNT; ++channel) {
             if (position >= length || !is_space(line[position])) {
                 return false;

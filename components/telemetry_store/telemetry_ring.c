@@ -1,5 +1,10 @@
 #include "telemetry_ring.h"
 
+bool telemetry_message_recordable(const heater_message_t *message, bool running, uint32_t run_id)
+{
+    return running && run_id != 0 && message->kind == HEATER_MESSAGE_DATA && message->run_id == run_id;
+}
+
 bool telemetry_ring_init(telemetry_ring_t *ring, telemetry_record_t *memory, size_t capacity)
 {
     if (!ring || !memory || !capacity) return false;

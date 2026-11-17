@@ -15,6 +15,7 @@ typedef enum {
     HEATER_COMMAND_SET,
     HEATER_COMMAND_STOP,
     HEATER_COMMAND_PING,
+    HEATER_COMMAND_START,
 } heater_command_kind_t;
 
 typedef struct {
@@ -51,13 +52,14 @@ typedef enum {
 
 typedef struct {
     heater_message_kind_t kind;
+    uint32_t run_id;
     union {
         heater_telemetry_t data;
         char reply[HEATER_COMMAND_MAX_LENGTH];
     };
 } heater_message_t;
 
-// Accept exactly SET d1 d2 d3 d4, STOP, or PING. No partial command is applied.
+// START begins heating/recording; SET only edits the duty; STOP/PING are scalar.
 bool heater_command_parse(const char *line, size_t length, heater_command_t *command);
 int32_t heater_decode_adc24(const uint8_t bytes[3]);
 float heater_resistance_ohm(int32_t code, uint32_t reference_mohm, int32_t offset_mohm);

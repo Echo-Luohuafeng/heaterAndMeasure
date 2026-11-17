@@ -27,3 +27,4 @@ telemetry_stats_t telemetry_ring_stats(const telemetry_ring_t *ring);
 size_t telemetry_ring_read(const telemetry_ring_t *ring, uint64_t from,
                            telemetry_record_t *output, size_t limit,
                            uint64_t *next, uint64_t *lost);
+bool telemetry_message_recordable(const heater_message_t *message, bool running, uint32_t run_id);

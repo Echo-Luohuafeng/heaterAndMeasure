@@ -7,6 +7,8 @@
 
 esp_err_t telemetry_store_init(void);
 esp_err_t telemetry_store_start(QueueHandle_t samples);
+// After control STOP, wait for an already accepted write to finish before ACK.
+void telemetry_store_sync_stop(void);
 bool telemetry_store_uses_psram(void);
 telemetry_stats_t telemetry_store_stats(void);
 bool telemetry_store_latest(heater_telemetry_t *frame);

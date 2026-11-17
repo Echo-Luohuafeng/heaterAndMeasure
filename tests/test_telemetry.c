@@ -7,6 +7,13 @@
 
 int main(void)
 {
+    heater_message_t message = {.kind = HEATER_MESSAGE_DATA, .run_id = 7};
+    assert(telemetry_message_recordable(&message, true, 7));
+    assert(!telemetry_message_recordable(&message, false, 7));
+    assert(!telemetry_message_recordable(&message, true, 8));
+    assert(!telemetry_message_recordable(&message, true, 0));
+    message.kind = HEATER_MESSAGE_REPLY;
+    assert(!telemetry_message_recordable(&message, true, 7));
     telemetry_ring_t ring;
     telemetry_record_t memory[3], read[4];
     assert(!telemetry_ring_init(&ring, memory, 0));

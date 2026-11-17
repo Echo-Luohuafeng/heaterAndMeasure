@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "heater_control.h"
 #include "heater_protocol.h"
+#include "telemetry_store.h"
 
 static bool s_started;
 
@@ -31,9 +32,12 @@ static void receive_task(void *arg)
                 if (discard) reply("ERR,LINE_TOO_LONG\n");
                 else if (used) {
                     if (!heater_command_parse(line, used, &command)) reply("ERR,COMMAND\n");
-                    else if (command.kind == HEATER_COMMAND_SET) reply("ERR,USE_WIFI\n");
+                    else if (command.kind == HEATER_COMMAND_SET || command.kind == HEATER_COMMAND_START) reply("ERR,USE_WIFI\n");
                     else if (heater_control_submit(&command) != ESP_OK) reply("ERR,MAINTENANCE\n");
-                    else reply(command.kind == HEATER_COMMAND_STOP ? "ACK,STOP\n" : "ACK,PING\n");
+                    else {
+                        if (command.kind == HEATER_COMMAND_STOP) telemetry_store_sync_stop();
+                        reply(command.kind == HEATER_COMMAND_STOP ? "ACK,STOP\n" : "ACK,PING\n");
+                    }
                 }
                 used = 0; discard = false;
             } else if (!discard) {

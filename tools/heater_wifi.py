@@ -76,11 +76,11 @@ def capture(device, csv_path, seconds, duties=None, history=False):
         boot = status["boot_id"]
         cursor = status["store"]["oldest" if history else "next"]
         controlling = False
-        requested_heat = duties is not None and any(duties)
+        requested_run = duties is not None
         try:
             if duties is not None:
-                device.command("SET " + " ".join(map(str, duties)))
-                controlling = requested_heat
+                device.command("START " + " ".join(map(str, duties)))
+                controlling = True
             deadline = time.monotonic() + seconds
             while time.monotonic() < deadline:
                 wake = time.monotonic() + 1
@@ -91,7 +91,7 @@ def capture(device, csv_path, seconds, duties=None, history=False):
                     if status["boot_id"] != boot:
                         boot, cursor, controlling = status["boot_id"], 0, False
                         print("Device rebooted; starting a new data session, heating stays off", file=sys.stderr)
-                    if status["maintenance"]:
+                    if status["maintenance"] or not status.get("running", True):
                         controlling = False
                     # Drain a backlog quickly; ordinary capture makes one request per second.
                     for _ in range(10):
@@ -117,7 +117,7 @@ def capture(device, csv_path, seconds, duties=None, history=False):
                     print(f"Connection interrupted: {error}; retrying data capture", file=sys.stderr)
                 time.sleep(max(0, min(wake, deadline) - time.monotonic()))
         finally:
-            if requested_heat:
+            if requested_run:
                 try:
                     device.command("STOP")
                 except (OSError, URLError, RuntimeError) as error:
@@ -136,13 +136,17 @@ def main(argv=None):
     monitor.add_argument("--duty", type=int, nargs=4)
     commands.add_parser("status")
     commands.add_parser("stop")
-    commands.add_parser("resume")
+    for action in ("start", "set"):
+        item = commands.add_parser(action)
+        item.add_argument("duty", type=int, nargs=4)
     commands.add_parser("reboot")
     ota = commands.add_parser("ota")
     ota.add_argument("firmware", type=Path, help="application .bin, not a merged flash image")
     wifi = commands.add_parser("wifi")
     wifi.add_argument("ssid")
     args = parser.parse_args(argv)
+    if args.action in ("start", "set") and any(d < 0 or d > 95 for d in args.duty):
+        parser.error("each duty must be 0–95")
     if args.action == "monitor" and (args.seconds <= 0 or (args.duty and any(d < 0 or d > 95 for d in args.duty))):
         parser.error("seconds must be positive; each duty must be 0–95")
     token = args.token_file.read_text().strip() if args.token_file else os.environ.get("HEATER_TOKEN")
@@ -155,8 +159,8 @@ def main(argv=None):
         print(json.dumps(device.request("/api/status"), indent=2, ensure_ascii=False))
     elif args.action == "stop":
         print(device.command("STOP"))
-    elif args.action == "resume":
-        print(device.request("/api/resume", b""))
+    elif args.action in ("start", "set"):
+        print(device.command(args.action.upper() + " " + " ".join(map(str, args.duty))))
     elif args.action == "reboot":
         print(device.request("/api/reboot", b""))
     elif args.action == "ota":

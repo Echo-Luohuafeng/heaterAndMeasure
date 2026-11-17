@@ -16,17 +16,17 @@
 <div class="muted" id="diagnostics">等待数据</div>
 </div>
 <div class="panel">
-<h2>加热控制</h2><p class="muted">设定范围 0–95，以 15 ms 加热窗口为基准。控制期间每秒续约，失去控制心跳后默认 5 秒停热。页面重开或设备重启不会自动恢复加热。</p>
+<h2>加热控制</h2><p class="muted">先填写四路设定，再点击“开始加热”才会加热并记录数据。勾选“加热保持”后每秒续约；取消勾选后停止续约，默认 5 秒后停热并停止记录。页面重开或设备重启不会自动开始。</p>
 <div class="row" id="duties"></div>
-<div class="row" style="margin-top:16px"><button id="set">应用四路设定</button><button id="stop" class="stop">立即停热</button><button id="resume" class="secondary">维护后恢复零占空比采样</button><button id="reboot" class="secondary">重启设备</button></div>
+<div class="row" style="margin-top:16px"><button id="start">开始加热</button><button id="set" class="secondary">应用四路设定</button><label><input id="hold" type="checkbox"> 加热保持</label><button id="stop" class="stop">停止加热与记录</button><button id="reboot" class="secondary">重启设备</button></div>
 </div>
 <div class="panel"><div class="row"><button id="csv" class="secondary">导出设备缓存 CSV</button><span id="store" class="muted"></span></div><p id="device" class="muted"></p></div>
-<details class="panel"><summary>固件升级</summary><p class="muted">选择本工程的应用 .bin。升级会停止加热并暂停测量，成功后重启；失败后使用上方按钮恢复零占空比采样。</p><div class="row"><input id="firmware" type="file" accept=".bin"><button id="ota">上传并升级</button></div><p id="otaStatus" class="muted"></p></details>
+<details class="panel"><summary>固件升级</summary><p class="muted">选择本工程的应用 .bin。升级会停止加热并暂停测量，成功后重启；失败后可点击“开始加热”恢复控制任务并开始新的加热记录。</p><div class="row"><input id="firmware" type="file" accept=".bin"><button id="ota">上传并升级</button></div><p id="otaStatus" class="muted"></p></details>
 <details class="panel"><summary>Wi-Fi 配网</summary><p class="muted">保存后停热并重启。连接电脑所在的 2.4 GHz 网络，通过路由器查看设备 IP；连接失败约 30 秒后恢复配置热点。</p><div class="row"><input id="ssid" type="text" placeholder="SSID" maxlength="32"><input id="wifiPassword" type="password" placeholder="Wi-Fi 密码"><button id="wifi">保存并重启</button></div></details>
 <script>
 'use strict';
 const $=id=>document.getElementById(id), colors=['#187a9d','#ca7827','#388258','#9b4c99'];
-let token=sessionStorage.getItem('heaterToken')||'',socket=null,cursor=0,boot='',history=[],status=null,ownsControl=false,polling=false,heartbeatBusy=false,reconnectTimer=null;
+let token=sessionStorage.getItem('heaterToken')||'',socket=null,cursor=0,boot='',history=[],status=null,ownsControl=false,polling=false,heartbeatBusy=false,reconnectTimer=null,controlEpoch=0;
 $('token').value=token;
 for(let i=0;i<4;i++){
  const card=document.createElement('div');card.className='channel';card.innerHTML=`<div style="color:${colors[i]}">通道 ${i+1}</div><div class="value" id="r${i}">— Ω</div><div class="muted" id="d${i}">占空比 0</div>`;$('channels').append(card);
@@ -38,7 +38,7 @@ async function api(path,options={}){
  const body=await response.json();if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);return body;
 }
 function updateFrame(f){
- for(let i=0;i<4;i++){$(`r${i}`).textContent=f[4][i]===null?'无效':`${f[4][i].toFixed(4)} Ω`;$(`d${i}`).textContent=`生效占空比 ${f[3][i]}`;}
+ for(let i=0;i<4;i++){$(`r${i}`).textContent=f[4][i]===null?'无效':`${f[4][i].toFixed(4)} Ω`;$(`d${i}`).textContent=`记录占空比 ${f[3][i]}`;}
  $('diagnostics').textContent=`采样序号 ${f[1]} · 有效标记 ${f[5]} · 故障 ${f[6]} · 时序迟到 ${f[7]} · 队列丢帧 ${f[8]} · 控制栈余量 ${f[9]} 字节`;
 }
 function draw(){
@@ -59,31 +59,42 @@ function stream(){
   for(const f of batch.frames){if(f[0]<cursor)continue;history.push(f);updateFrame(f);}cursor=batch.next;
   if(history.length){const cutoff=history.at(-1)[2]-60000000;history=history.filter(f=>f[2]>=cutoff);}draw();
  };
- current.onclose=()=>{$('connection').textContent='连接中断';ownsControl=false;if(socket===current)reconnectTimer=setTimeout(stream,2000);};
+ current.onclose=()=>{$('connection').textContent='数据连接中断';if(socket===current)reconnectTimer=setTimeout(stream,2000);};
  current.onerror=()=>{$('connection').textContent='连接失败';};
 }
 async function poll(){
- if(!token||polling)return;polling=true;
- try{status=await api('/api/status');if(boot&&status.boot_id!==boot)ownsControl=false;
-  $('device').textContent=`固件 ${status.version} · ${status.network.ip} · RSSI ${status.network.rssi} dBm · 内部 RAM ${status.free_internal_bytes} 字节 · ${status.verified?'自检通过':'自检未通过'} · ${status.maintenance?'维护中':'采样中'}`;
-  $('store').textContent=`${status.store.psram?'PSRAM':'内部 RAM 降级缓存'} · ${status.store.next-status.store.oldest}/${status.store.capacity} 帧 · 历史覆盖 ${status.store.overwritten} 帧`;
+ if(!token||polling)return;polling=true;const epoch=controlEpoch;
+ try{status=await api('/api/status');if(epoch===controlEpoch&&((boot&&status.boot_id!==boot)||!status.running))ownsControl=false;
+  $('device').textContent=`固件 ${status.version} · ${status.network.ip} · RSSI ${status.network.rssi} dBm · 内部 RAM ${status.free_internal_bytes} 字节 · ${status.verified?'自检通过':'自检未通过'} · ${status.maintenance?'维护中':status.running?'加热与记录中':'未开始加热，未记录'}`;
+  $('store').textContent=`${status.store.psram?'PSRAM':'内部 RAM 降级缓存'} · ${status.store.next-status.store.oldest}/${status.store.capacity} 帧 · 历史覆盖 ${status.store.overwritten} 帧 · ${status.recording?'正在记录':'记录已停止'}`;
   $('otaStatus').textContent=status.ota.active?`已写入 ${status.ota.received}/${status.ota.total} 字节`:status.ota.error?`升级错误 ${status.ota.error}`:'';
-  if(status.maintenance)ownsControl=false;
+  if(status.maintenance&&epoch===controlEpoch)ownsControl=false;
+  if(!status.running)for(let i=0;i<4;i++)$(`d${i}`).textContent='当前未加热';
   if(status.control_ready===false){$('diagnostics').textContent=`采样初始化失败（${status.control_init_error}），输出已关闭。检查 ADC 供电与连接后重启；网页和 OTA 可继续使用。`;}
-  $('set').disabled=!status.verified||status.maintenance||status.control_ready===false;$('resume').disabled=!status.maintenance||status.ota.active||status.control_ready===false;
- }catch(error){$('connection').textContent=error.message;ownsControl=false;}finally{polling=false;}
+  $('start').disabled=!status.verified||status.running||status.ota.active||status.control_ready===false;
+  $('set').disabled=!status.verified||status.maintenance||status.control_ready===false;
+ }catch(error){$('connection').textContent=error.message;}finally{polling=false;}
 }
 async function connectDashboard(){const snapshot=await api('/api/status');boot=snapshot.boot_id;cursor=Math.max(snapshot.store.oldest,snapshot.store.next-50);if(snapshot.latest)updateFrame(snapshot.latest);stream();poll();}
 $('connect').onclick=async()=>{token=$('token').value.trim();cursor=0;boot='';history=[];ownsControl=false;try{await connectDashboard();sessionStorage.setItem('heaterToken',token);message('连接成功。');}catch(e){message(e.message);}};
 async function command(text){return api('/api/control',{method:'POST',headers:{'Content-Type':'text/plain'},body:text});}
-$('set').onclick=async()=>{const duties=Array.from({length:4},(_,i)=>Number($(`duty${i}`).value));if(duties.some(v=>!Number.isInteger(v)||v<0||v>95)){message('请输入四个 0–95 整数。');return;}try{await command(`SET ${duties.join(' ')}`);ownsControl=duties.some(v=>v>0);message('设定已接收，下一周期生效。');}catch(e){message(e.message);}};
-$('stop').onclick=async()=>{ownsControl=false;try{await command('STOP');message('加热已停止。');}catch(e){message(`停热命令未确认：${e.message}；控制租约到期后停热。`);}};
-$('resume').onclick=async()=>{try{await api('/api/resume',{method:'POST'});message('已恢复零占空比采样。');poll();}catch(e){message(e.message);}};
-$('reboot').onclick=async()=>{if(!confirm('停止实验并重启设备？'))return;ownsControl=false;try{await api('/api/reboot',{method:'POST'});message('设备正在重启。');}catch(e){message(e.message);}};
-setInterval(async()=>{if(!ownsControl||heartbeatBusy||document.hidden)return;heartbeatBusy=true;try{await command('PING');}catch(e){ownsControl=false;message(`续约失败：${e.message}`);}finally{heartbeatBusy=false;}},1000);
+function readDuties(){const duties=Array.from({length:4},(_,i)=>Number($(`duty${i}`).value));if(duties.some(v=>!Number.isInteger(v)||v<0||v>95)){message('请输入四个 0–95 整数。');return null;}return duties;}
+$('set').onclick=async()=>{const duties=readDuties();if(!duties)return;try{await command(`SET ${duties.join(' ')}`);message(ownsControl||status?.running?'设定已接收，下一周期生效。':'设定已保存，点击“开始加热”后才加热和记录。');}catch(e){message(e.message);}};
+$('start').onclick=async()=>{const duties=readDuties();if(!duties)return;$('start').disabled=true;try{const reply=await command(`START ${duties.join(' ')}`);controlEpoch++;ownsControl=true;history=[];cursor=reply.next;status={...status,running:true,recording:true,maintenance:false};stream();message('已开始加热与记录。');if($('hold').checked)await heartbeat();}catch(e){message(e.message);}finally{poll();}};
+$('stop').onclick=async()=>{controlEpoch++;ownsControl=false;status={...status,running:false,recording:false};try{await command('STOP');message('加热与记录已停止，已有缓存保留。');}catch(e){message(`停止命令未确认：${e.message}；控制租约到期后停止。`);}};
+$('reboot').onclick=async()=>{if(!confirm('停止实验并重启设备？'))return;controlEpoch++;ownsControl=false;try{await api('/api/reboot',{method:'POST'});message('设备正在重启。');}catch(e){message(e.message);}};
+async function heartbeat(){
+ if(!$('hold').checked||heartbeatBusy)return;
+ heartbeatBusy=true;const epoch=controlEpoch;
+ try{
+  if(!ownsControl){const snapshot=await api('/api/status');if(epoch!==controlEpoch||!$('hold').checked||!snapshot.running)return;status=snapshot;ownsControl=true;}
+  await command('PING');
+ }catch(e){if(epoch===controlEpoch)ownsControl=false;message(`续约失败：${e.message}`);}finally{heartbeatBusy=false;}
+}
+$('hold').onchange=()=>heartbeat();
+setInterval(heartbeat,1000);
 setInterval(poll,1000);
 window.addEventListener('resize',draw);
-document.addEventListener('visibilitychange',()=>{if(document.hidden&&ownsControl){ownsControl=false;command('STOP').catch(()=>{});}});
 window.addEventListener('pagehide',()=>{if(ownsControl)fetch('/api/control',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'text/plain'},body:'STOP',keepalive:true}).catch(()=>{});});
 $('csv').onclick=async()=>{
  const button=$('csv');button.disabled=true;try{const snapshot=await api('/api/status');const target=snapshot.store.next;let from=snapshot.store.oldest;
@@ -92,8 +103,8 @@ $('csv').onclick=async()=>{
  const url=URL.createObjectURL(new Blob([lines.join('\n')+'\n'],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`heater-${snapshot.boot_id}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);message(`已导出 ${lines.length-1} 帧。`);
  }catch(e){message(e.message);}finally{button.disabled=false;}
 };
-$('ota').onclick=async()=>{const file=$('firmware').files[0];if(!file){message('请选择应用 .bin 文件。');return;}if(!confirm('停止加热和采样，并上传新固件？'))return;ownsControl=false;$('ota').disabled=true;message('正在上传固件，请保持页面与设备连接。');try{await api('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});message('升级完成，设备正在重启。');}catch(e){message(`升级未确认：${e.message}。查看设备状态，失败后可恢复采样。`);}finally{$('ota').disabled=false;}};
-$('wifi').onclick=async()=>{if(!confirm('保存 Wi-Fi 配置将停止实验并重启，继续？'))return;ownsControl=false;try{await api('/api/wifi',{method:'POST',body:new URLSearchParams({ssid:$('ssid').value,password:$('wifiPassword').value})});$('wifiPassword').value='';message('已保存并重启。请连接同一路由器，查看设备的新 IP。');}catch(e){message(e.message);}};
+$('ota').onclick=async()=>{const file=$('firmware').files[0];if(!file){message('请选择应用 .bin 文件。');return;}if(!confirm('停止加热和采样，并上传新固件？'))return;controlEpoch++;ownsControl=false;$('ota').disabled=true;message('正在上传固件，请保持页面与设备连接。');try{await api('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});message('升级完成，设备正在重启。');}catch(e){message(`升级未确认：${e.message}。查看设备状态，失败后可恢复采样。`);}finally{$('ota').disabled=false;}};
+$('wifi').onclick=async()=>{if(!confirm('保存 Wi-Fi 配置将停止实验并重启，继续？'))return;controlEpoch++;ownsControl=false;try{await api('/api/wifi',{method:'POST',body:new URLSearchParams({ssid:$('ssid').value,password:$('wifiPassword').value})});$('wifiPassword').value='';message('已保存并重启。请连接同一路由器，查看设备的新 IP。');}catch(e){message(e.message);}};
 if(token){connectDashboard().catch(e=>message(e.message));}
 </script>
 </html>
