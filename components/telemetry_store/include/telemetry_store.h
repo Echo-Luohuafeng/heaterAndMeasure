@@ -1,9 +1,9 @@
 #pragma once
 
+#include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "telemetry_ring.h"
-#include "esp_err.h"
 
 // 初始化带互斥保护的历史缓存，优先分配 4 MiB PSRAM。
 // 不可用时降级为 32 KiB 内部 RAM；历史仅保存在易失内存中。
@@ -24,10 +24,20 @@ telemetry_stats_t telemetry_store_stats(void);
 // 将最近的历史记录复制到非空的 `frame`，不包含空闲安全样本。
 // 缓存有记录时返回 true；否则返回 false 且不改写输出。
 // 要求缓存已初始化，只能在任务中调用。
-bool telemetry_store_latest(heater_telemetry_t *frame);
+bool telemetry_store_latest(heater_telemetry_t* frame);
 // 加锁从 `from` 读取至多 `limit` 条历史记录到 `output`，返回实际条数。
 // `from=0` 从最旧记录开始；output 须可容纳 limit 条记录。
 // 非空的 `next`、`lost`、`stats` 接收后续游标、覆盖丢失数和同次锁内的统计快照。
 // 要求缓存已初始化，只能在任务中调用。
-size_t telemetry_store_read(uint64_t from, telemetry_record_t *output, size_t limit,
-                            uint64_t *next, uint64_t *lost, telemetry_stats_t *stats);
+size_t telemetry_store_read(uint64_t from, telemetry_record_t* output,
+                            size_t limit, uint64_t* next, uint64_t* lost,
+                            telemetry_stats_t* stats);
+
+// 接收门由实时内核通过注入回调更新，STOP 的旧代次消息不再写入历史。
+void telemetry_store_set_run(bool running, uint32_t run_id,
+                             uint32_t generation);
+// 写入不可变配置并固定当前配置；历史引用未释放时容量不足会拒绝新实验。
+esp_err_t telemetry_store_prepare_config(const heater_config_record_t* record);
+// 在同一缓存锁内复制配置表，调用方提供容量；序列化在锁外进行。
+unsigned telemetry_store_configurations(heater_config_record_t* records,
+                                        unsigned capacity);

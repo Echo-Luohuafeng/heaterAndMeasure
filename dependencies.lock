@@ -51,6 +51,6 @@ dependencies:
 direct_dependencies:
 - espressif/cjson
 - espressif/esp_tinyusb
-manifest_hash: 058361aa6818bfbda35fc5fd9ae4be2cc3b72c4d2dd021a9c8eb3a91a4a056ce
+manifest_hash: 81382bbbda5857f03eb598e318c077820b64cbb4fa826169a88d86de710eafdb
 target: esp32s3
 version: 3.0.0

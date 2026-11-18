@@ -1,0 +1,40 @@
+{
+  "test_version": "2.0.3-rollback-test",
+  "test_image_sha256": "c948a8aa5920e43f2ff403d4737d36c66ab6d4dbff15a5cd6405d16eb888fc0e",
+  "upload_accepted": true,
+  "automatic_rollback_passed": true,
+  "running_version": "2.0.2-wifi",
+  "after_rollback_status": {
+    "boot_id": "fa76c63f0d70b1f4",
+    "version": "2.0.2-wifi",
+    "verified": true,
+    "lease_ms": 5000,
+    "control_ready": false,
+    "control_init_error": 264,
+    "maintenance": true,
+    "network": {
+      "connected": true,
+      "ap": false,
+      "ip": "10.0.0.109",
+      "rssi": -26,
+      "ap_ssid": "Heater-F36C79"
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 1,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 223723,
+    "min_internal_bytes": 152268,
+    "http_stack_free_bytes": 6132,
+    "latest": null
+  }
+}

@@ -1,0 +1,290 @@
+{
+  "initial_status": {
+    "boot_id": "7d2a8f7762af30f5",
+    "version": "3.1.1-resistance",
+    "verified": true,
+    "lease_ms": 5000,
+    "max_duty": 2,
+    "running": false,
+    "recording": false,
+    "run_id": 6,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "transport": "usb_ncm",
+      "ip": "192.168.7.1",
+      "rx_drops": 0,
+      "tx_drops": 0,
+      "usb_stack_free_bytes": 2832,
+      "network_stack_free_bytes": 3348
+    },
+    "store": {
+      "psram": true,
+      "capacity": 34952,
+      "oldest": 1,
+      "next": 2518,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 262007,
+    "min_internal_bytes": 175660,
+    "http_stack_free_bytes": 5444,
+    "timing": {
+      "adc_start_max_offset_us": 17064,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": [
+      2517,
+      15973,
+      319540000,
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        109.969559,
+        109.572289,
+        109.530121,
+        109.557152
+      ],
+      15,
+      0,
+      0,
+      0,
+      4304,
+      {
+        "run_id": 6,
+        "config_id": 7,
+        "mode": 0,
+        "algorithm": 0,
+        "target": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "requested": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "limited_mask": 0,
+        "blocked_mask": 0,
+        "source_sequence": 0,
+        "computation_us": 0
+      }
+    ],
+    "controller": {
+      "mode": "resistance",
+      "config_id": 8,
+      "algorithm": 1,
+      "parameters": {
+        "kp": [
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "ki": [
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806
+        ],
+        "kd": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "derivative_tau_s": 0.10000000149011612,
+        "tracking_gain": 1
+      },
+      "ready": true,
+      "target": [
+        112.0,
+        112.0,
+        112.0,
+        112.0
+      ],
+      "tolerance_ohm": 0.05,
+      "max_duty": 0.0,
+      "delay_cycles": 2,
+      "worker_stack_free_bytes": 4924,
+      "faults": 0,
+      "lease_refreshes": 81,
+      "lease_remaining_ms": 0
+    }
+  },
+  "experiments": {
+    "boot_id": "7d2a8f7762af30f5",
+    "firmware": "3.1.1-resistance",
+    "period_us": 20000,
+    "delay_cycles": 2,
+    "reference_mohm": [
+      1000000,
+      1000000,
+      1000000,
+      1000000
+    ],
+    "offset_mohm": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "configurations": [
+      {
+        "config_id": 8,
+        "algorithm": 1,
+        "target": [
+          112,
+          112,
+          112,
+          112
+        ],
+        "max_duty": 0,
+        "tolerance_ohm": 0.05000000074505806,
+        "parameters": {
+          "kp": [
+            0.5,
+            0.5,
+            0.5,
+            0.5
+          ],
+          "ki": [
+            0.05000000074505806,
+            0.05000000074505806,
+            0.05000000074505806,
+            0.05000000074505806
+          ],
+          "kd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "derivative_tau_s": 0.10000000149011612,
+          "tracking_gain": 1
+        },
+        "algorithm_version": "1"
+      },
+      {
+        "config_id": 2,
+        "algorithm": 1,
+        "target": [
+          112,
+          112,
+          112,
+          112
+        ],
+        "max_duty": 0,
+        "tolerance_ohm": 0.05000000074505806,
+        "parameters": {
+          "kp": [
+            0.5,
+            0.5,
+            0.5,
+            0.5
+          ],
+          "ki": [
+            0.05000000074505806,
+            0.05000000074505806,
+            0.05000000074505806,
+            0.05000000074505806
+          ],
+          "kd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "derivative_tau_s": 0.10000000149011612,
+          "tracking_gain": 1
+        },
+        "algorithm_version": "1"
+      },
+      {
+        "config_id": 4,
+        "algorithm": 1,
+        "target": [
+          109.39934539794922,
+          109.50823974609375,
+          109.47367095947266,
+          109.54021453857422
+        ],
+        "max_duty": 1.5,
+        "tolerance_ohm": 0.05000000074505806,
+        "parameters": {
+          "kp": [
+            4,
+            4,
+            4,
+            4
+          ],
+          "ki": [
+            0.300000011920929,
+            0.300000011920929,
+            0.300000011920929,
+            0.300000011920929
+          ],
+          "kd": [
+            0.00999999977648258,
+            0.00999999977648258,
+            0.00999999977648258,
+            0.00999999977648258
+          ],
+          "derivative_tau_s": 0.10000000149011612,
+          "tracking_gain": 1
+        },
+        "algorithm_version": "1"
+      },
+      {
+        "config_id": 5,
+        "algorithm": 1,
+        "target": [
+          109.70492553710938,
+          109.8077392578125,
+          109.75031280517578,
+          109.82121276855469
+        ],
+        "max_duty": 1.5,
+        "tolerance_ohm": 0.05000000074505806,
+        "parameters": {
+          "kp": [
+            4,
+            4,
+            4,
+            4
+          ],
+          "ki": [
+            0.300000011920929,
+            0.300000011920929,
+            0.300000011920929,
+            0.300000011920929
+          ],
+          "kd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "derivative_tau_s": 0.10000000149011612,
+          "tracking_gain": 1
+        },
+        "algorithm_version": "1"
+      }
+    ]
+  }
+}

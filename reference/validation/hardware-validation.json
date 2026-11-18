@@ -1,0 +1,386 @@
+{
+  "version": "2.0.8-wifi",
+  "url": "http://10.0.0.109/",
+  "max_test_duty": 2,
+  "frames": 1226,
+  "all_1226_frames_valid": true,
+  "periods_us": {
+    "20000": 1225
+  },
+  "heating_stages": [
+    {
+      "stage": "zero_baseline",
+      "requested_duty": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "frames": 263,
+      "faults": {
+        "0": 262,
+        "32": 1
+      },
+      "mean_R": [
+        109.472958,
+        109.579785,
+        109.541015,
+        109.616939
+      ],
+      "max_applied_duty": 0,
+      "final_duty": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "stage": "channel1_1percent",
+      "requested_duty": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "frames": 123,
+      "faults": {
+        "0": 123
+      },
+      "mean_R": [
+        110.243383,
+        109.592202,
+        109.544796,
+        109.620322
+      ],
+      "max_applied_duty": 1,
+      "final_duty": [
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "stage": "zero_after_channel1",
+      "requested_duty": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "frames": 57,
+      "faults": {
+        "0": 56,
+        "32": 1
+      },
+      "mean_R": [
+        110.326401,
+        109.629512,
+        109.547306,
+        109.621518
+      ],
+      "max_applied_duty": 1,
+      "final_duty": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "stage": "all_1percent",
+      "requested_duty": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "frames": 124,
+      "faults": {
+        "0": 124
+      },
+      "mean_R": [
+        110.640666,
+        110.813193,
+        110.636684,
+        110.520743
+      ],
+      "max_applied_duty": 1,
+      "final_duty": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "stage": "all_2percent",
+      "requested_duty": [
+        2,
+        2,
+        2,
+        2
+      ],
+      "frames": 108,
+      "faults": {
+        "0": 108
+      },
+      "mean_R": [
+        113.935405,
+        114.700603,
+        114.458837,
+        114.190618
+      ],
+      "max_applied_duty": 2,
+      "final_duty": [
+        2,
+        2,
+        2,
+        2
+      ]
+    },
+    {
+      "stage": "stop",
+      "requested_duty": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "frames": 121,
+      "faults": {
+        "0": 120,
+        "32": 1
+      },
+      "mean_R": [
+        112.871438,
+        113.602033,
+        113.47843,
+        113.100194
+      ],
+      "max_applied_duty": 2,
+      "final_duty": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "stage": "lease_expiry_1percent",
+      "requested_duty": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "frames": 320,
+      "faults": {
+        "0": 267,
+        "16": 53
+      },
+      "mean_R": [
+        112.156986,
+        113.122072,
+        112.997368,
+        112.41974
+      ],
+      "max_applied_duty": 1,
+      "final_duty": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "stage": "final_stop",
+      "requested_duty": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "frames": 110,
+      "faults": {
+        "16": 4,
+        "48": 1,
+        "0": 105
+      },
+      "mean_R": [
+        111.324913,
+        112.011695,
+        111.975669,
+        111.56568
+      ],
+      "max_applied_duty": 0,
+      "final_duty": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "final_live_status": {
+    "boot_id": "891d2b255c6b237c",
+    "version": "2.0.8-wifi",
+    "verified": true,
+    "lease_ms": 5000,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "ap": false,
+      "ip": "10.0.0.109",
+      "rssi": -24,
+      "ap_ssid": "Heater-F36C79"
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 18733,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 221479,
+    "min_internal_bytes": 130644,
+    "http_stack_free_bytes": 6068,
+    "timing": {
+      "adc_start_max_offset_us": 17047,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": [
+      18732,
+      18733,
+      374720000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.486221,
+        109.596611,
+        109.555603,
+        109.636246
+      ],
+      15,
+      0,
+      0,
+      0,
+      4920
+    ]
+  },
+  "websocket_sampling": {
+    "version": "2.0.8-wifi",
+    "frames_per_packet": [
+      10,
+      47,
+      53,
+      48
+    ],
+    "intervals_seconds": [
+      0.924,
+      1.047,
+      0.999
+    ],
+    "all_samples_valid": true,
+    "all_duties_zero": true,
+    "total_frames": 158
+  },
+  "ota_validation": {
+    "from_version": "2.0.1-wifi",
+    "target_version": "2.0.2-wifi",
+    "upload_seconds": 6.24,
+    "application_sha256": "3e5218f2dff33b3d559555790f79424f6d916d0041e4138e2efd74aead56c2fb",
+    "new_version_confirmed": true,
+    "after_ota_status": {
+      "boot_id": "b9573dae0f165b0c",
+      "version": "2.0.2-wifi",
+      "verified": true,
+      "lease_ms": 5000,
+      "control_ready": false,
+      "control_init_error": 264,
+      "maintenance": true,
+      "network": {
+        "connected": true,
+        "ap": false,
+        "ip": "10.0.0.109",
+        "rssi": -26,
+        "ap_ssid": "Heater-F36C79"
+      },
+      "store": {
+        "psram": true,
+        "capacity": 65536,
+        "oldest": 1,
+        "next": 1,
+        "overwritten": 0
+      },
+      "ota": {
+        "active": false,
+        "total": 0,
+        "received": 0,
+        "error": 0
+      },
+      "free_internal_bytes": 224091,
+      "min_internal_bytes": 153144,
+      "http_stack_free_bytes": 6480,
+      "latest": null
+    },
+    "truncated_image_rejected": true,
+    "old_boot_retained_after_truncation": true,
+    "no_reboot_on_failed_upload": true
+  },
+  "automatic_rollback": {
+    "test_version": "2.0.3-rollback-test",
+    "test_image_sha256": "c948a8aa5920e43f2ff403d4737d36c66ab6d4dbff15a5cd6405d16eb888fc0e",
+    "upload_accepted": true,
+    "automatic_rollback_passed": true,
+    "running_version": "2.0.2-wifi",
+    "after_rollback_status": {
+      "boot_id": "fa76c63f0d70b1f4",
+      "version": "2.0.2-wifi",
+      "verified": true,
+      "lease_ms": 5000,
+      "control_ready": false,
+      "control_init_error": 264,
+      "maintenance": true,
+      "network": {
+        "connected": true,
+        "ap": false,
+        "ip": "10.0.0.109",
+        "rssi": -26,
+        "ap_ssid": "Heater-F36C79"
+      },
+      "store": {
+        "psram": true,
+        "capacity": 65536,
+        "oldest": 1,
+        "next": 1,
+        "overwritten": 0
+      },
+      "ota": {
+        "active": false,
+        "total": 0,
+        "received": 0,
+        "error": 0
+      },
+      "free_internal_bytes": 223723,
+      "min_internal_bytes": 152268,
+      "http_stack_free_bytes": 6132,
+      "latest": null
+    }
+  },
+  "flash_backup": "build/default/device-backup/flash-before-wifi-20261117-184133.bin"
+}

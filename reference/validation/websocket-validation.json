@@ -1,0 +1,13 @@
+{
+  "version": "2.0.2-wifi",
+  "handshake_valid": true,
+  "packets": 6,
+  "intervals_seconds": [
+    0.962,
+    1.001,
+    0.986,
+    1.05,
+    0.966
+  ],
+  "recovery_frames_empty": true
+}

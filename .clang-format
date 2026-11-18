@@ -1,0 +1,5 @@
+# C/C++ 采用 Google 格式；业务说明统一使用中文注释。
+BasedOnStyle: Google
+ColumnLimit: 80
+IndentWidth: 2
+SortIncludes: CaseSensitive

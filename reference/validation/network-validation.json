@@ -1,0 +1,46 @@
+{
+  "url": "http://10.0.0.109",
+  "dashboard_matches": true,
+  "checks": {
+    "bad_token": true,
+    "stop": true,
+    "set_in_recovery": true,
+    "invalid_cursor": true,
+    "invalid_limit": true,
+    "boot_changed": true,
+    "no_fabricated_data": true
+  },
+  "status": {
+    "boot_id": "34426ac563b1fd3e",
+    "version": "2.0.1-wifi",
+    "verified": true,
+    "lease_ms": 5000,
+    "control_ready": false,
+    "control_init_error": 264,
+    "maintenance": true,
+    "network": {
+      "connected": true,
+      "ap": false,
+      "ip": "10.0.0.109",
+      "rssi": -30,
+      "ap_ssid": "Heater-F36C79"
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 1,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 223191,
+    "min_internal_bytes": 142180,
+    "http_stack_free_bytes": 6136,
+    "latest": null
+  }
+}

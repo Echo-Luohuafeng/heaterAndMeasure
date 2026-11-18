@@ -1,0 +1,714 @@
+{
+  "cases": [
+    {
+      "case": "tracking",
+      "frames": 1756,
+      "duties": [
+        0.0,
+        0.5,
+        1.0
+      ],
+      "ws_frames": 1742,
+      "max_compute_us": 224,
+      "min_control_stack": 4336,
+      "final_error": [
+        0.005577000000002386,
+        -0.0005040000000064992,
+        -0.023360999999994192,
+        -0.019005000000007044
+      ],
+      "status": {
+        "boot_id": "7d2a8f7762af30f5",
+        "version": "3.1.1-resistance",
+        "verified": true,
+        "lease_ms": 5000,
+        "max_duty": 2,
+        "running": false,
+        "recording": false,
+        "run_id": 3,
+        "control_ready": true,
+        "control_init_error": 0,
+        "maintenance": false,
+        "network": {
+          "connected": true,
+          "transport": "usb_ncm",
+          "ip": "192.168.7.1",
+          "rx_drops": 0,
+          "tx_drops": 0,
+          "usb_stack_free_bytes": 2832,
+          "network_stack_free_bytes": 3348
+        },
+        "store": {
+          "psram": true,
+          "capacity": 34952,
+          "oldest": 1,
+          "next": 2231,
+          "overwritten": 0
+        },
+        "ota": {
+          "active": false,
+          "total": 0,
+          "received": 0,
+          "error": 0
+        },
+        "free_internal_bytes": 260647,
+        "min_internal_bytes": 175660,
+        "http_stack_free_bytes": 5460,
+        "timing": {
+          "adc_start_max_offset_us": 17064,
+          "adc_start_misses": 0,
+          "adc_read_misses": 0
+        },
+        "latest": [
+          2230,
+          10161,
+          203300000,
+          [
+            0.5,
+            0.5,
+            0.5,
+            0.5
+          ],
+          [
+            109.404922,
+            109.507736,
+            109.45031,
+            109.52121
+          ],
+          15,
+          0,
+          0,
+          0,
+          4336,
+          {
+            "run_id": 3,
+            "config_id": 4,
+            "mode": 1,
+            "algorithm": 1,
+            "target": [
+              109.399345,
+              109.50824,
+              109.473671,
+              109.540215
+            ],
+            "requested": [
+              0.500604,
+              0.611309,
+              0.677002,
+              0.679265
+            ],
+            "limited_mask": 0,
+            "blocked_mask": 0,
+            "source_sequence": 10159,
+            "computation_us": 19
+          }
+        ],
+        "controller": {
+          "mode": "resistance",
+          "config_id": 4,
+          "algorithm": 1,
+          "parameters": {
+            "kp": [
+              4,
+              4,
+              4,
+              4
+            ],
+            "ki": [
+              0.300000011920929,
+              0.300000011920929,
+              0.300000011920929,
+              0.300000011920929
+            ],
+            "kd": [
+              0.00999999977648258,
+              0.00999999977648258,
+              0.00999999977648258,
+              0.00999999977648258
+            ],
+            "derivative_tau_s": 0.10000000149011612,
+            "tracking_gain": 1
+          },
+          "ready": true,
+          "target": [
+            109.399345,
+            109.50824,
+            109.473671,
+            109.540215
+          ],
+          "tolerance_ohm": 0.05,
+          "max_duty": 1.5,
+          "delay_cycles": 2,
+          "worker_stack_free_bytes": 4924,
+          "faults": 0,
+          "lease_refreshes": 78,
+          "lease_remaining_ms": 4725
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "algorithm": 1,
+    "target": [
+      109.399348,
+      109.50824300000001,
+      109.473674,
+      109.540218
+    ],
+    "parameters": {
+      "kp": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "ki": [
+        0.3,
+        0.3,
+        0.3,
+        0.3
+      ],
+      "kd": [
+        0.01,
+        0.01,
+        0.01,
+        0.01
+      ],
+      "derivative_tau_s": 0.1,
+      "tracking_gain": 1
+    },
+    "tolerance_ohm": 0.05,
+    "max_duty": 1.5
+  },
+  "experiments": {
+    "boot_id": "7d2a8f7762af30f5",
+    "firmware": "3.1.1-resistance",
+    "period_us": 20000,
+    "delay_cycles": 2,
+    "reference_mohm": [
+      1000000,
+      1000000,
+      1000000,
+      1000000
+    ],
+    "offset_mohm": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "configurations": [
+      {
+        "config_id": 2,
+        "algorithm": 1,
+        "target": [
+          112,
+          112,
+          112,
+          112
+        ],
+        "max_duty": 0,
+        "tolerance_ohm": 0.05000000074505806,
+        "parameters": {
+          "kp": [
+            0.5,
+            0.5,
+            0.5,
+            0.5
+          ],
+          "ki": [
+            0.05000000074505806,
+            0.05000000074505806,
+            0.05000000074505806,
+            0.05000000074505806
+          ],
+          "kd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "derivative_tau_s": 0.10000000149011612,
+          "tracking_gain": 1
+        },
+        "algorithm_version": "1"
+      },
+      {
+        "config_id": 4,
+        "algorithm": 1,
+        "target": [
+          109.39934539794922,
+          109.50823974609375,
+          109.47367095947266,
+          109.54021453857422
+        ],
+        "max_duty": 1.5,
+        "tolerance_ohm": 0.05000000074505806,
+        "parameters": {
+          "kp": [
+            4,
+            4,
+            4,
+            4
+          ],
+          "ki": [
+            0.300000011920929,
+            0.300000011920929,
+            0.300000011920929,
+            0.300000011920929
+          ],
+          "kd": [
+            0.00999999977648258,
+            0.00999999977648258,
+            0.00999999977648258,
+            0.00999999977648258
+          ],
+          "derivative_tau_s": 0.10000000149011612,
+          "tracking_gain": 1
+        },
+        "algorithm_version": "1"
+      }
+    ]
+  },
+  "passed": true,
+  "final_status": {
+    "boot_id": "c0a5a0dbb6826244",
+    "version": "3.1.1-resistance",
+    "verified": true,
+    "lease_ms": 5000,
+    "max_duty": 2,
+    "running": false,
+    "recording": false,
+    "run_id": 2,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "transport": "usb_ncm",
+      "ip": "192.168.7.1",
+      "rx_drops": 0,
+      "tx_drops": 0,
+      "usb_stack_free_bytes": 2912,
+      "network_stack_free_bytes": 3348
+    },
+    "store": {
+      "psram": true,
+      "capacity": 34952,
+      "oldest": 1,
+      "next": 28,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 262111,
+    "min_internal_bytes": 189468,
+    "http_stack_free_bytes": 5652,
+    "timing": {
+      "adc_start_max_offset_us": 17027,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": [
+      27,
+      161,
+      3300000,
+      [
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      [
+        109.23687,
+        109.360756,
+        109.325317,
+        109.377205
+      ],
+      15,
+      0,
+      0,
+      0,
+      4304,
+      {
+        "run_id": 2,
+        "config_id": 3,
+        "mode": 1,
+        "algorithm": 1,
+        "target": [
+          109.396896,
+          109.511223,
+          109.476021,
+          109.54171
+        ],
+        "requested": [
+          0.625615,
+          0.597665,
+          0.617225,
+          0.627367
+        ],
+        "limited_mask": 0,
+        "blocked_mask": 0,
+        "source_sequence": 159,
+        "computation_us": 9
+      }
+    ],
+    "controller": {
+      "mode": "manual",
+      "config_id": 4,
+      "algorithm": 1,
+      "parameters": {
+        "kp": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "ki": [
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806
+        ],
+        "kd": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "derivative_tau_s": 0.10000000149011612,
+        "tracking_gain": 1
+      },
+      "ready": false,
+      "target": [
+        109.396896,
+        109.511223,
+        109.476021,
+        109.54171
+      ],
+      "tolerance_ohm": 0.05,
+      "max_duty": 1.5,
+      "delay_cycles": 2,
+      "worker_stack_free_bytes": 5020,
+      "faults": 0,
+      "lease_refreshes": 2,
+      "lease_remaining_ms": 4497
+    }
+  },
+  "safety": {
+    "lease": {
+      "passed": true,
+      "frames": 250,
+      "log": [
+        {
+          "running": true,
+          "remaining_ms": 4944,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 4725,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 4504,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 4284,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 4064,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 3844,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 3623,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 3402,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 3182,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 2962,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 2742,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 2521,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 2301,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 2081,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 1861,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 1642,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 1422,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 1202,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 982,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 762,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 542,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 321,
+          "refreshes": 79
+        },
+        {
+          "running": true,
+          "remaining_ms": 101,
+          "refreshes": 79
+        },
+        {
+          "running": false,
+          "remaining_ms": 0,
+          "refreshes": 79
+        },
+        {
+          "running": false,
+          "remaining_ms": 0,
+          "refreshes": 79
+        },
+        {
+          "running": false,
+          "remaining_ms": 0,
+          "refreshes": 79
+        },
+        {
+          "running": false,
+          "remaining_ms": 0,
+          "refreshes": 79
+        },
+        {
+          "running": false,
+          "remaining_ms": 0,
+          "refreshes": 79
+        },
+        {
+          "running": false,
+          "remaining_ms": 0,
+          "refreshes": 79
+        },
+        {
+          "running": false,
+          "remaining_ms": 0,
+          "refreshes": 79
+        },
+        {
+          "running": false,
+          "remaining_ms": 0,
+          "refreshes": 79
+        },
+        {
+          "running": false,
+          "remaining_ms": 0,
+          "refreshes": 79
+        }
+      ],
+      "no_internal_renewal": true
+    },
+    "acm_stop": true,
+    "invalid_configs_rejected": true,
+    "manual_compatibility": true,
+    "passed": true,
+    "final_status": {
+      "boot_id": "7d2a8f7762af30f5",
+      "version": "3.1.1-resistance",
+      "verified": true,
+      "lease_ms": 5000,
+      "max_duty": 2,
+      "running": false,
+      "recording": false,
+      "run_id": 6,
+      "control_ready": true,
+      "control_init_error": 0,
+      "maintenance": false,
+      "network": {
+        "connected": true,
+        "transport": "usb_ncm",
+        "ip": "192.168.7.1",
+        "rx_drops": 0,
+        "tx_drops": 0,
+        "usb_stack_free_bytes": 2832,
+        "network_stack_free_bytes": 3348
+      },
+      "store": {
+        "psram": true,
+        "capacity": 34952,
+        "oldest": 1,
+        "next": 2518,
+        "overwritten": 0
+      },
+      "ota": {
+        "active": false,
+        "total": 0,
+        "received": 0,
+        "error": 0
+      },
+      "free_internal_bytes": 261591,
+      "min_internal_bytes": 175660,
+      "http_stack_free_bytes": 5444,
+      "timing": {
+        "adc_start_max_offset_us": 17064,
+        "adc_start_misses": 0,
+        "adc_read_misses": 0
+      },
+      "latest": [
+        2517,
+        15973,
+        319540000,
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          109.969559,
+          109.572289,
+          109.530121,
+          109.557152
+        ],
+        15,
+        0,
+        0,
+        0,
+        4304,
+        {
+          "run_id": 6,
+          "config_id": 7,
+          "mode": 0,
+          "algorithm": 0,
+          "target": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "requested": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "limited_mask": 0,
+          "blocked_mask": 0,
+          "source_sequence": 0,
+          "computation_us": 0
+        }
+      ],
+      "controller": {
+        "mode": "manual",
+        "config_id": 7,
+        "algorithm": 1,
+        "parameters": {
+          "kp": [
+            4,
+            4,
+            4,
+            4
+          ],
+          "ki": [
+            0.300000011920929,
+            0.300000011920929,
+            0.300000011920929,
+            0.300000011920929
+          ],
+          "kd": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "derivative_tau_s": 0.10000000149011612,
+          "tracking_gain": 1
+        },
+        "ready": false,
+        "target": [
+          109.704926,
+          109.807739,
+          109.750313,
+          109.821213
+        ],
+        "tolerance_ohm": 0.05,
+        "max_duty": 1.5,
+        "delay_cycles": 2,
+        "worker_stack_free_bytes": 4924,
+        "faults": 0,
+        "lease_refreshes": 81,
+        "lease_remaining_ms": 4649
+      }
+    }
+  },
+  "metrics_file": "resistance-hardware-metrics.json",
+  "cli_csv_metadata_verified": true,
+  "final_firmware_sha256": "beecb44136f2e5ea7bf7e3902c5192b33c2c72098af16bbc3353721a2307a920",
+  "final_deployment": {
+    "passed": true,
+    "sample_frames": 20,
+    "half_percent_verified": true,
+    "lease_verified": true,
+    "boot_id": "c0a5a0dbb6826244",
+    "common_limiter": true
+  }
+}

@@ -1,0 +1,399 @@
+{
+  "max_test_duty": 2,
+  "cases": [
+    {
+      "name": "idle_history_frozen",
+      "next": 1,
+      "passed": true
+    },
+    {
+      "name": "web_and_authentication",
+      "passed": true
+    },
+    {
+      "name": "all_channels_reject_above_2",
+      "passed": true
+    },
+    {
+      "name": "set_does_not_start",
+      "next": 1,
+      "passed": true
+    },
+    {
+      "name": "zero_duty_stopped",
+      "next": 157,
+      "passed": true
+    },
+    {
+      "name": "zero_duty",
+      "frames": 156,
+      "invalid_frames": 0,
+      "intervals_us": [
+        20000
+      ],
+      "max_duty": 0,
+      "minimum_control_stack_free_bytes": 4956,
+      "last_faults": 0,
+      "last_deadline_misses": 0,
+      "last_queue_drops": 0,
+      "websocket_frames": [
+        120,
+        121
+      ]
+    },
+    {
+      "name": "single_channel_1_stopped",
+      "next": 311,
+      "passed": true
+    },
+    {
+      "name": "single_channel_1",
+      "frames": 154,
+      "invalid_frames": 0,
+      "intervals_us": [
+        20000
+      ],
+      "max_duty": 1,
+      "minimum_control_stack_free_bytes": 4956,
+      "last_faults": 0,
+      "last_deadline_misses": 0,
+      "last_queue_drops": 0,
+      "websocket_frames": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "four_channels_1_stopped",
+      "next": 464,
+      "passed": true
+    },
+    {
+      "name": "four_channels_1",
+      "frames": 153,
+      "invalid_frames": 0,
+      "intervals_us": [
+        20000
+      ],
+      "max_duty": 1,
+      "minimum_control_stack_free_bytes": 4956,
+      "last_faults": 0,
+      "last_deadline_misses": 0,
+      "last_queue_drops": 0,
+      "websocket_frames": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "four_channels_2_http_ws_pressure_stopped",
+      "next": 768,
+      "passed": true
+    },
+    {
+      "name": "four_channels_2_http_ws_pressure",
+      "frames": 304,
+      "invalid_frames": 0,
+      "intervals_us": [
+        20000
+      ],
+      "max_duty": 2,
+      "minimum_control_stack_free_bytes": 4924,
+      "last_faults": 0,
+      "last_deadline_misses": 0,
+      "last_queue_drops": 0,
+      "websocket_frames": [
+        279,
+        280
+      ]
+    },
+    {
+      "name": "acm_stop_stopped",
+      "next": 887,
+      "passed": true
+    },
+    {
+      "name": "acm_stop",
+      "frames": 119,
+      "invalid_frames": 0,
+      "intervals_us": [
+        20000
+      ],
+      "max_duty": 2,
+      "minimum_control_stack_free_bytes": 4924,
+      "last_faults": 0,
+      "last_deadline_misses": 0,
+      "last_queue_drops": 0,
+      "websocket_frames": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "lease_timeout_stopped",
+      "next": 1137,
+      "passed": true
+    },
+    {
+      "name": "lease_timeout",
+      "frames": 250,
+      "invalid_frames": 0,
+      "intervals_us": [
+        20000
+      ],
+      "max_duty": 2,
+      "minimum_control_stack_free_bytes": 4924,
+      "last_faults": 0,
+      "last_deadline_misses": 0,
+      "last_queue_drops": 0,
+      "websocket_frames": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "truncated_ota_rejected",
+      "passed": true
+    },
+    {
+      "name": "restart_after_failed_ota_stopped",
+      "next": 1241,
+      "passed": true
+    },
+    {
+      "name": "restart_after_failed_ota",
+      "frames": 104,
+      "invalid_frames": 0,
+      "intervals_us": [
+        20000
+      ],
+      "max_duty": 0,
+      "minimum_control_stack_free_bytes": 4924,
+      "last_faults": 0,
+      "last_deadline_misses": 0,
+      "last_queue_drops": 0,
+      "websocket_frames": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "valid_ota_reboot_and_confirmation",
+      "passed": true,
+      "new_boot": "b01eeb4b04f1483b"
+    },
+    {
+      "name": "post_ota_sampling_stopped",
+      "next": 105,
+      "passed": true
+    },
+    {
+      "name": "post_ota_sampling",
+      "frames": 104,
+      "invalid_frames": 0,
+      "intervals_us": [
+        20000
+      ],
+      "max_duty": 0,
+      "minimum_control_stack_free_bytes": 4956,
+      "last_faults": 0,
+      "last_deadline_misses": 0,
+      "last_queue_drops": 0,
+      "websocket_frames": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "final_outputs_off",
+      "next": 105,
+      "passed": true
+    }
+  ],
+  "initial_status": {
+    "boot_id": "ce93b830e757bd9b",
+    "version": "3.0.0-usb-ncm",
+    "verified": true,
+    "lease_ms": 5000,
+    "max_duty": 2,
+    "running": false,
+    "recording": false,
+    "run_id": 0,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "transport": "usb_ncm",
+      "ip": "192.168.7.1",
+      "rx_drops": 0,
+      "tx_drops": 0,
+      "usb_stack_free_bytes": 2912,
+      "network_stack_free_bytes": 3356
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 1,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 277619,
+    "min_internal_bytes": 205220,
+    "http_stack_free_bytes": 6048,
+    "timing": {
+      "adc_start_max_offset_us": 17039,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": null
+  },
+  "after_sampling_status": {
+    "boot_id": "ce93b830e757bd9b",
+    "version": "3.0.0-usb-ncm",
+    "verified": true,
+    "lease_ms": 5000,
+    "max_duty": 2,
+    "running": false,
+    "recording": false,
+    "run_id": 6,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "transport": "usb_ncm",
+      "ip": "192.168.7.1",
+      "rx_drops": 0,
+      "tx_drops": 0,
+      "usb_stack_free_bytes": 2832,
+      "network_stack_free_bytes": 3356
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 1137,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 276683,
+    "min_internal_bytes": 189000,
+    "http_stack_free_bytes": 6048,
+    "timing": {
+      "adc_start_max_offset_us": 17049,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": [
+      1136,
+      11896,
+      237920000,
+      [
+        2,
+        2,
+        2,
+        2
+      ],
+      [
+        119.507851,
+        121.727882,
+        121.705803,
+        120.495621
+      ],
+      15,
+      0,
+      0,
+      0,
+      4924
+    ]
+  },
+  "final_status": {
+    "boot_id": "b01eeb4b04f1483b",
+    "version": "3.0.0-usb-ncm",
+    "verified": true,
+    "lease_ms": 5000,
+    "max_duty": 2,
+    "running": false,
+    "recording": false,
+    "run_id": 2,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "transport": "usb_ncm",
+      "ip": "192.168.7.1",
+      "rx_drops": 0,
+      "tx_drops": 0,
+      "usb_stack_free_bytes": 2832,
+      "network_stack_free_bytes": 3356
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 3640,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 276743,
+    "min_internal_bytes": 189552,
+    "http_stack_free_bytes": 6032,
+    "timing": {
+      "adc_start_max_offset_us": 17048,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": [
+      3639,
+      5993,
+      119940000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.599739,
+        109.725594,
+        109.680771,
+        109.741089
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ]
+  },
+  "passed": true,
+  "total_frames": 1344,
+  "usb_unplug": {
+    "passed": true,
+    "total_frames": 3535,
+    "invalid_frames": 0,
+    "offline_seconds": 11.461020318001829,
+    "last_record_after_last_success_ms": 160.0
+  },
+  "all_recorded_frames": 4879,
+  "firmware_sha256": "12a9c154675b059d134676efff99b227b206d6f7bbbb1195fb60c361ff3d23fd",
+  "date": "2026-11-18"
+}

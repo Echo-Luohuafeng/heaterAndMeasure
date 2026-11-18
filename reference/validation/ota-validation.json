@@ -1,0 +1,43 @@
+{
+  "from_version": "2.0.1-wifi",
+  "target_version": "2.0.2-wifi",
+  "upload_seconds": 6.24,
+  "application_sha256": "3e5218f2dff33b3d559555790f79424f6d916d0041e4138e2efd74aead56c2fb",
+  "new_version_confirmed": true,
+  "after_ota_status": {
+    "boot_id": "b9573dae0f165b0c",
+    "version": "2.0.2-wifi",
+    "verified": true,
+    "lease_ms": 5000,
+    "control_ready": false,
+    "control_init_error": 264,
+    "maintenance": true,
+    "network": {
+      "connected": true,
+      "ap": false,
+      "ip": "10.0.0.109",
+      "rssi": -26,
+      "ap_ssid": "Heater-F36C79"
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 1,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 224091,
+    "min_internal_bytes": 153144,
+    "http_stack_free_bytes": 6480,
+    "latest": null
+  },
+  "truncated_image_rejected": true,
+  "old_boot_retained_after_truncation": true,
+  "no_reboot_on_failed_upload": true
+}

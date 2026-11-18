@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
-#include "heater_protocol.h"
+#include "heater_domain.h"
 
 // 引脚依据 J901/J902 与标准 ESP32-S3-DevKitC-1 排针布局推定。
 // GPIO48 保留给板载 RGB LED，兼容板需核对实物接线。
@@ -39,5 +39,5 @@ void heater_board_heat_request(bool enabled);
 // 调用方必须先关闭加热请求并预留互锁切换时间。
 void heater_board_measure_request(bool enabled);
 
-// 0.5 个百分点的 PWM 比较器计数；与整数接口使用相同的安全上限。
+// 0.5 个百分点的 PWM 比较器计数；接口支持 0～190，对应 0～95%。
 bool heater_board_pwm_apply_ticks(const uint8_t ticks[4]);

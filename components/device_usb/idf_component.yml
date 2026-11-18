@@ -1,0 +1,4 @@
+# USB 依赖由 Component Manager 管理，版本保持不变。
+dependencies:
+  espressif/esp_tinyusb:
+    version: "2.0.1~1"

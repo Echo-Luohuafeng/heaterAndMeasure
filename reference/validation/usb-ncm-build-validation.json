@@ -1,0 +1,73 @@
+{
+  "vid_pid": "303a:4011",
+  "interfaces": [
+    {
+      "number": 0,
+      "alternate": 0,
+      "class": 2,
+      "subclass": 2
+    },
+    {
+      "number": 1,
+      "alternate": 0,
+      "class": 10,
+      "subclass": 0
+    },
+    {
+      "number": 2,
+      "alternate": 0,
+      "class": 2,
+      "subclass": 13
+    },
+    {
+      "number": 3,
+      "alternate": 0,
+      "class": 10,
+      "subclass": 0
+    },
+    {
+      "number": 3,
+      "alternate": 1,
+      "class": 10,
+      "subclass": 0
+    }
+  ],
+  "endpoints": [
+    {
+      "address": "0x81",
+      "type": 3,
+      "size": 8
+    },
+    {
+      "address": "0x2",
+      "type": 2,
+      "size": 64
+    },
+    {
+      "address": "0x82",
+      "type": 2,
+      "size": 64
+    },
+    {
+      "address": "0x83",
+      "type": 3,
+      "size": 64
+    },
+    {
+      "address": "0x84",
+      "type": 2,
+      "size": 64
+    },
+    {
+      "address": "0x4",
+      "type": 2,
+      "size": 64
+    }
+  ],
+  "wifi_driver_linked": false,
+  "callbacks_linked": true,
+  "application_bytes": 516272,
+  "hardware_validated": true,
+  "sha256": "12a9c154675b059d134676efff99b227b206d6f7bbbb1195fb60c361ff3d23fd",
+  "max_duty": 2
+}

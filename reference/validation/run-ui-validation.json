@@ -1,0 +1,115 @@
+{
+  "set_does_not_start_or_record": true,
+  "heartbeat_keeps_run_over_5_seconds": true,
+  "valid_recorded_frames": 428,
+  "expiry_stops_history": true,
+  "new_run_and_stop_freezes_history": true,
+  "obsolete_resume_endpoint_removed": true,
+  "start_recovers_maintenance": true,
+  "max_test_duty": 1,
+  "final_status": {
+    "boot_id": "c48626806dd9c2a6",
+    "version": "2.1.1-wifi",
+    "verified": true,
+    "lease_ms": 5000,
+    "running": false,
+    "recording": false,
+    "run_id": 3,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "ap": false,
+      "ip": "10.0.0.109",
+      "rssi": -24,
+      "ap_ssid": "Heater-F36C79"
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 743,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 512,
+      "received": 512,
+      "error": 5379
+    },
+    "free_internal_bytes": 221627,
+    "min_internal_bytes": 142596,
+    "http_stack_free_bytes": 6056,
+    "timing": {
+      "adc_start_max_offset_us": 17062,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": [
+      742,
+      1192,
+      24140000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.96315,
+        109.882088,
+        109.670517,
+        109.668228
+      ],
+      15,
+      0,
+      0,
+      0,
+      4952
+    ]
+  },
+  "final_deployed_version": "2.1.2-wifi",
+  "final_idle_cache_frozen": true,
+  "final_deployed_status": {
+    "boot_id": "a65fc6b7a0b3234f",
+    "version": "2.1.2-wifi",
+    "verified": true,
+    "lease_ms": 5000,
+    "running": false,
+    "recording": false,
+    "run_id": 0,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "ap": false,
+      "ip": "10.0.0.109",
+      "rssi": -25,
+      "ap_ssid": "Heater-F36C79"
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 1,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 221867,
+    "min_internal_bytes": 137160,
+    "http_stack_free_bytes": 6052,
+    "timing": {
+      "adc_start_max_offset_us": 17053,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": null
+  }
+}

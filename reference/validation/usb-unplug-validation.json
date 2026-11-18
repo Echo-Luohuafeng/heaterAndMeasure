@@ -1,0 +1,497 @@
+{
+  "duties": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "before": {
+    "boot_id": "b01eeb4b04f1483b",
+    "version": "3.0.0-usb-ncm",
+    "verified": true,
+    "lease_ms": 5000,
+    "max_duty": 2,
+    "running": false,
+    "recording": false,
+    "run_id": 1,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "transport": "usb_ncm",
+      "ip": "192.168.7.1",
+      "rx_drops": 0,
+      "tx_drops": 0,
+      "usb_stack_free_bytes": 2912,
+      "network_stack_free_bytes": 3356
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 105,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 276543,
+    "min_internal_bytes": 196792,
+    "http_stack_free_bytes": 6048,
+    "timing": {
+      "adc_start_max_offset_us": 17041,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": [
+      104,
+      226,
+      4600000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        111.431183,
+        111.881676,
+        111.914009,
+        111.829399
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ]
+  },
+  "disconnect_monotonic": 16763.965225614,
+  "after": {
+    "boot_id": "b01eeb4b04f1483b",
+    "version": "3.0.0-usb-ncm",
+    "verified": true,
+    "lease_ms": 5000,
+    "max_duty": 2,
+    "running": false,
+    "recording": false,
+    "run_id": 2,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "transport": "usb_ncm",
+      "ip": "192.168.7.1",
+      "rx_drops": 0,
+      "tx_drops": 0,
+      "usb_stack_free_bytes": 2832,
+      "network_stack_free_bytes": 3356
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 3640,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 270475,
+    "min_internal_bytes": 196792,
+    "http_stack_free_bytes": 6032,
+    "timing": {
+      "adc_start_max_offset_us": 17048,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": [
+      3639,
+      5993,
+      119940000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.599739,
+        109.725594,
+        109.680771,
+        109.741089
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ]
+  },
+  "offline_seconds": 11.461020318001829,
+  "tail_frames": [
+    [
+      3630,
+      5984,
+      119760000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.603165,
+        109.727707,
+        109.68354,
+        109.740677
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ],
+    [
+      3631,
+      5985,
+      119780000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.601799,
+        109.72226,
+        109.684708,
+        109.737038
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ],
+    [
+      3632,
+      5986,
+      119800000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.602364,
+        109.719841,
+        109.682861,
+        109.73793
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ],
+    [
+      3633,
+      5987,
+      119820000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.602425,
+        109.7323,
+        109.688011,
+        109.742912
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ],
+    [
+      3634,
+      5988,
+      119840000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.598282,
+        109.729736,
+        109.686371,
+        109.738586
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ],
+    [
+      3635,
+      5989,
+      119860000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.598549,
+        109.721031,
+        109.682442,
+        109.75206
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ],
+    [
+      3636,
+      5990,
+      119880000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.599709,
+        109.724762,
+        109.681847,
+        109.739662
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ],
+    [
+      3637,
+      5991,
+      119900000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.597626,
+        109.721359,
+        109.683128,
+        109.743118
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ],
+    [
+      3638,
+      5992,
+      119920000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.598312,
+        109.721245,
+        109.683723,
+        109.742645
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ],
+    [
+      3639,
+      5993,
+      119940000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.599739,
+        109.725594,
+        109.680771,
+        109.741089
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ]
+  ],
+  "frames_since_start": 3535,
+  "last_before_disconnect": {
+    "boot_id": "b01eeb4b04f1483b",
+    "version": "3.0.0-usb-ncm",
+    "verified": true,
+    "lease_ms": 5000,
+    "max_duty": 2,
+    "running": true,
+    "recording": true,
+    "run_id": 2,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "transport": "usb_ncm",
+      "ip": "192.168.7.1",
+      "rx_drops": 0,
+      "tx_drops": 0,
+      "usb_stack_free_bytes": 2832,
+      "network_stack_free_bytes": 3356
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 3632,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 276543,
+    "min_internal_bytes": 196792,
+    "http_stack_free_bytes": 6032,
+    "timing": {
+      "adc_start_max_offset_us": 17048,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": [
+      3631,
+      5985,
+      119780000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.601799,
+        109.72226,
+        109.684708,
+        109.737038
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ]
+  },
+  "passed": true,
+  "final_status": {
+    "boot_id": "b01eeb4b04f1483b",
+    "version": "3.0.0-usb-ncm",
+    "verified": true,
+    "lease_ms": 5000,
+    "max_duty": 2,
+    "running": false,
+    "recording": false,
+    "run_id": 2,
+    "control_ready": true,
+    "control_init_error": 0,
+    "maintenance": false,
+    "network": {
+      "connected": true,
+      "transport": "usb_ncm",
+      "ip": "192.168.7.1",
+      "rx_drops": 0,
+      "tx_drops": 0,
+      "usb_stack_free_bytes": 2832,
+      "network_stack_free_bytes": 3356
+    },
+    "store": {
+      "psram": true,
+      "capacity": 65536,
+      "oldest": 1,
+      "next": 3640,
+      "overwritten": 0
+    },
+    "ota": {
+      "active": false,
+      "total": 0,
+      "received": 0,
+      "error": 0
+    },
+    "free_internal_bytes": 270475,
+    "min_internal_bytes": 189552,
+    "http_stack_free_bytes": 6032,
+    "timing": {
+      "adc_start_max_offset_us": 17048,
+      "adc_start_misses": 0,
+      "adc_read_misses": 0
+    },
+    "latest": [
+      3639,
+      5993,
+      119940000,
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        109.599739,
+        109.725594,
+        109.680771,
+        109.741089
+      ],
+      15,
+      0,
+      0,
+      0,
+      4956
+    ]
+  },
+  "total_frames": 3535,
+  "invalid_frames": 0,
+  "last_record_after_last_success_ms": 160.0
+}

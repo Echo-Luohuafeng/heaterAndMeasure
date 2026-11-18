@@ -1,7 +1,7 @@
 {
     "idf.currentSetup": "/opt/esp/idf",
     "idf.flashType": "UART",
-    "idf.port": "detect",
+    "idf.port": "/dev/ttyACM0",
     "idf.openOcdConfigs": [
         "board/esp32s3-builtin.cfg"
     ],
@@ -10,5 +10,11 @@
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32s3"
     },
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/default/compile_commands.json"
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/default/compile_commands.json",
+    "clangd.path": "/opt/esp/tools/esp-clangd/esp-21.1.3_20260408/esp-clangd/bin/clangd",
+    "clangd.arguments": [
+      "--background-index",
+      "--query-driver=**",
+      "--compile-commands-dir=/workspaces/0-heaterAndMeasure/build/default"
+    ]
 }

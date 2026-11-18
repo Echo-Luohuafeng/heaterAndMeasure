@@ -15,4 +15,4 @@ esp_err_t ads1220_start(size_t channel);
 // 读取 `channel` 通道的 24 位有符号码到非空的 `code`。
 // 调用前应确认 DRDY 就绪并仍处于测量窗口；失败时不改写 `code`。
 // 仅供控制任务调用；返回 ESP_OK 或参数/SPI 错误。
-esp_err_t ads1220_read(size_t channel, int32_t *code);
+esp_err_t ads1220_read(size_t channel, int32_t* code);

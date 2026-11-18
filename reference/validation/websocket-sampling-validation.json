@@ -1,0 +1,17 @@
+{
+  "version": "2.0.8-wifi",
+  "frames_per_packet": [
+    10,
+    47,
+    53,
+    48
+  ],
+  "intervals_seconds": [
+    0.924,
+    1.047,
+    0.999
+  ],
+  "all_samples_valid": true,
+  "all_duties_zero": true,
+  "total_frames": 158
+}

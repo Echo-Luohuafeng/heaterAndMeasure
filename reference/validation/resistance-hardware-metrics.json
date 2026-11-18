@@ -1,0 +1,81 @@
+{
+  "tolerance_ohm": 0.05,
+  "hold_seconds": 2,
+  "experiments": [
+    {
+      "boot_id": "7d2a8f7762af30f5",
+      "run_id": "3",
+      "config_id": "4",
+      "algorithm": "1",
+      "duration_s": 35.099999999999994,
+      "records": 1756,
+      "channels": [
+        {
+          "channel": 1,
+          "valid": 1756,
+          "invalid": 0,
+          "missing_intervals": 0,
+          "rmse_ohm": 0.07649020941242311,
+          "iae_ohm_s": 2.237437859999908,
+          "ise_ohm2_s": 0.20503804008820634,
+          "steady_signed_error_ohm": -0.014376920318721955,
+          "overshoot_ohm": 0.1291970000000049,
+          "settling_time_s": null,
+          "pwm_integral_percent_s": 18.15500000000007,
+          "pwm_total_variation_percent": 97.5,
+          "limited_fraction": 0.0,
+          "blocked_fraction": 0.0
+        },
+        {
+          "channel": 2,
+          "valid": 1756,
+          "invalid": 0,
+          "missing_intervals": 0,
+          "rmse_ohm": 0.07535024203095199,
+          "iae_ohm_s": 2.122867390000018,
+          "ise_ohm2_s": 0.19897937249623077,
+          "steady_signed_error_ohm": -0.003936322709163796,
+          "overshoot_ohm": 0.22742399999999918,
+          "settling_time_s": null,
+          "pwm_integral_percent_s": 17.36499999999994,
+          "pwm_total_variation_percent": 88.5,
+          "limited_fraction": 0.010250569476082005,
+          "blocked_fraction": 0.0
+        },
+        {
+          "channel": 3,
+          "valid": 1756,
+          "invalid": 0,
+          "missing_intervals": 0,
+          "rmse_ohm": 0.0744506858806272,
+          "iae_ohm_s": 2.133625589999886,
+          "ise_ohm2_s": 0.19422988550027517,
+          "steady_signed_error_ohm": -0.005290083665335009,
+          "overshoot_ohm": 0.20000500000000443,
+          "settling_time_s": null,
+          "pwm_integral_percent_s": 17.354999999999965,
+          "pwm_total_variation_percent": 94.5,
+          "limited_fraction": 0.010250569476082005,
+          "blocked_fraction": 0.0
+        },
+        {
+          "channel": 4,
+          "valid": 1756,
+          "invalid": 0,
+          "missing_intervals": 0,
+          "rmse_ohm": 0.07588528534370995,
+          "iae_ohm_s": 2.199667250000096,
+          "ise_ohm2_s": 0.2018629488992827,
+          "steady_signed_error_ohm": -0.008976872509963917,
+          "overshoot_ohm": 0.16082000000000107,
+          "settling_time_s": null,
+          "pwm_integral_percent_s": 17.535000000000004,
+          "pwm_total_variation_percent": 122.5,
+          "limited_fraction": 0.013097949886104784,
+          "blocked_fraction": 0.0
+        }
+      ],
+      "max_computation_us": 224
+    }
+  ]
+}

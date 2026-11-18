@@ -9,5 +9,5 @@
     "tracking_gain": 1.0
   },
   "tolerance_ohm": 0.05,
-  "max_duty": 2.0
+  "max_duty": 95.0
 }
