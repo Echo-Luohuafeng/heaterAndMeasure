@@ -5,5 +5,5 @@ idf_component_register(
     REQUIRES esp_common
     PRIV_REQUIRES esp_http_server app_update bootloader_support esp_app_format esp_system
                   esp_timer esp_hw_support heap freertos heater_control heater_protocol
-                  telemetry_store network_manager nvs_flash log
+                  telemetry_store network_manager nvs_flash log espressif__cjson
 )

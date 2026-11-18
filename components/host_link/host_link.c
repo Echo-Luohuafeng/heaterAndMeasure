@@ -52,7 +52,7 @@ static void receive_task(void *arg)
                 if (discard) reply("ERR,LINE_TOO_LONG\n");
                 else if (used) {
                     if (!heater_command_parse(line, used, &command)) reply("ERR,COMMAND\n");
-                    else if (command.kind == HEATER_COMMAND_SET || command.kind == HEATER_COMMAND_START) reply("ERR,USE_HTTP\n");
+                    else if (command.kind == HEATER_COMMAND_SET || command.kind == HEATER_COMMAND_START || command.kind == HEATER_COMMAND_RESISTANCE_START) reply("ERR,USE_HTTP\n");
                     else if (heater_control_submit(&command) != ESP_OK) reply("ERR,MAINTENANCE\n");
                     else {
                         if (command.kind == HEATER_COMMAND_STOP) telemetry_store_sync_stop();

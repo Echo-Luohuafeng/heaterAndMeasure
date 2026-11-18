@@ -31,10 +31,15 @@ int main(void)
     assert(telemetry_ring_read(&ring, UINT64_MAX, read, 4, &next, &lost) == 0 && next == 6);
     frame.resistance_ohm[1] = NAN; frame.valid_mask = 5;
     telemetry_record_t record = {.cursor = 9, .frame = frame};
-    char json[320];
+    char json[768];
     assert(telemetry_record_json(&record, json, sizeof(json)) > 0);
     assert(strstr(json, "[100.000000,null,120.000000,null]"));
     assert(!strstr(json, "nan") && !strstr(json, "inf"));
+    record.frame.experiment.mode=1;record.frame.experiment.config_id=3;
+    record.frame.experiment.pwm_ticks[0]=3;record.frame.experiment.target[0]=110;
+    assert(telemetry_record_json(&record,json,sizeof(json))>0);
+    assert(strstr(json,"[1.5,0.0,0.0,0.0]"));
+    assert(strstr(json,"\"config_id\":3"));
     assert(telemetry_record_json(&record, json, 8) == -1);
     assert(telemetry_parse_cursor("18446744073709551615", &next) && next == UINT64_MAX);
     assert(!telemetry_parse_cursor("18446744073709551616", &next));

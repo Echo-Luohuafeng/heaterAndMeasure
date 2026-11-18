@@ -1,6 +1,8 @@
 #include "device_web.h"
 
 #include <inttypes.h>
+#include <math.h>
+#include "cJSON.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,7 +31,7 @@
 #define WS_CLIENTS 2
 #define WS_BATCH 100
 #define HTTP_BATCH 250
-#define RECORD_JSON_BYTES 320
+#define RECORD_JSON_BYTES 768
 
 static const char *TAG = "device_web";
 static httpd_handle_t s_server;
@@ -108,7 +110,7 @@ static char *batch_json(uint64_t from, size_t limit, size_t *length, uint64_t *b
     const size_t count = telemetry_store_read(from, records, limit, &next, &lost, &stats);
     if (batch_next) *batch_next = next;
     int used = snprintf(output, capacity,
-        "{\"schema\":1,\"boot_id\":\"%s\",\"oldest\":%" PRIu64 ",\"next\":%" PRIu64
+        "{\"schema\":2,\"boot_id\":\"%s\",\"oldest\":%" PRIu64 ",\"next\":%" PRIu64
         ",\"lost\":%" PRIu64 ",\"more\":%s,\"frames\":[",
         s_boot_id, stats.oldest, next, lost, next < stats.next ? "true" : "false");
     for (size_t i = 0; i < count; ++i) {
@@ -153,7 +155,32 @@ static esp_err_t status_handler(httpd_req_t *req)
     const size_t total = s_ota.total, received = s_ota.received;
     const esp_err_t error = s_ota.error;
     portEXIT_CRITICAL(&s_lock);
-    char output[1600];
+    const heater_controller_status_t controller=heater_control_controller_status();
+    char controller_json[1500];
+    const controller_config_t *c=&controller.config;
+    char params[900]="{}";
+    unsigned count;const controller_descriptor_t *descriptors=heater_controller_registry(&count);
+    for (unsigned a=0;a<count;++a) if(descriptors[a].id==c->algorithm) {
+        cJSON *object=cJSON_CreateObject();
+        if (!object) return ESP_ERR_NO_MEM;
+        for(unsigned n=0;n<descriptors[a].parameter_count;++n) {
+            const controller_parameter_t *p=&descriptors[a].parameters[n];
+            if(p->count==1) cJSON_AddNumberToObject(object,p->name,c->parameters[p->offset]);
+            else cJSON_AddItemToObject(object,p->name,cJSON_CreateFloatArray(c->parameters+p->offset,p->count));
+        }
+        const bool printed=cJSON_PrintPreallocated(object,params,sizeof(params),false);cJSON_Delete(object);
+        if(!printed) return ESP_ERR_NO_MEM;
+    }
+    snprintf(controller_json,sizeof(controller_json),
+        "{\"mode\":\"%s\",\"config_id\":%u,\"algorithm\":%u,\"parameters\":%s,\"ready\":%s,"
+        "\"target\":[%.6f,%.6f,%.6f,%.6f],\"tolerance_ohm\":%.6f,\"max_duty\":%.3f,"
+        "\"delay_cycles\":2,\"worker_stack_free_bytes\":%u,\"faults\":%u,\"lease_refreshes\":%u,\"lease_remaining_ms\":%u}",
+        controller.resistance_mode ? "resistance" : "manual",(unsigned)controller.config_id,(unsigned)c->algorithm,params,controller.ready ? "true" : "false",
+        (double)c->target[0],(double)c->target[1],(double)c->target[2],(double)c->target[3],
+        (double)c->tolerance_ohm,(double)c->max_duty,
+        (unsigned)controller.worker_stack_free_bytes,(unsigned)controller.controller_faults,
+        (unsigned)controller.lease_refreshes,(unsigned)controller.lease_remaining_ms);
+    char output[3000];
     snprintf(output, sizeof(output),
         "{\"boot_id\":\"%s\",\"version\":\"%s\",\"verified\":%s,\"lease_ms\":%d,\"max_duty\":%d,"
         "\"running\":%s,\"recording\":%s,\"run_id\":%u,"
@@ -161,7 +188,7 @@ static esp_err_t status_handler(httpd_req_t *req)
         "\"store\":{\"psram\":%s,\"capacity\":%u,\"oldest\":%" PRIu64 ",\"next\":%" PRIu64 ",\"overwritten\":%" PRIu64 "},"
         "\"ota\":{\"active\":%s,\"total\":%u,\"received\":%u,\"error\":%d},"
         "\"free_internal_bytes\":%u,\"min_internal_bytes\":%u,\"http_stack_free_bytes\":%u,"
-        "\"timing\":{\"adc_start_max_offset_us\":%u,\"adc_start_misses\":%u,\"adc_read_misses\":%u},\"latest\":%s}",
+        "\"timing\":{\"adc_start_max_offset_us\":%u,\"adc_start_misses\":%u,\"adc_read_misses\":%u},\"latest\":%s,\"controller\":%s}",
         s_boot_id, esp_app_get_description()->version, verified ? "true" : "false", CONFIG_HEATER_CONTROL_LEASE_MS, CONFIG_HEATER_OUTPUT_DUTY_LIMIT,
         run.running ? "true" : "false", run.running ? "true" : "false", (unsigned)run.id,
         s_control_init_result == ESP_OK ? "true" : "false", s_control_init_result,
@@ -173,7 +200,7 @@ static esp_err_t status_handler(httpd_req_t *req)
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
         (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
         (unsigned)uxTaskGetStackHighWaterMark(NULL), (unsigned)timing.adc_start_max_offset_us,
-        (unsigned)timing.adc_start_misses, (unsigned)timing.adc_read_misses, latest);
+        (unsigned)timing.adc_start_misses, (unsigned)timing.adc_read_misses, latest, controller_json);
     return respond(req, "200 OK", output);
 }
 
@@ -244,19 +271,154 @@ static esp_err_t command_handler(httpd_req_t *req)
         return respond(req, "409 Conflict", "{\"error\":\"BUSY\"}");
     const uint64_t next = telemetry_store_stats().next;
     esp_err_t result = ESP_OK;
-    if (command.kind == HEATER_COMMAND_START && heater_control_is_maintenance())
+    if ((command.kind == HEATER_COMMAND_START || command.kind == HEATER_COMMAND_RESISTANCE_START) && heater_control_is_maintenance())
         result = heater_control_resume();
     if (result == ESP_OK) result = heater_control_submit(&command);
     const heater_run_state_t run = heater_control_run_state();
     xSemaphoreGive(s_operation);
     if (result != ESP_OK) return respond(req, "409 Conflict", "{\"error\":\"CONTROL_UNAVAILABLE\"}");
-    if (command.kind == HEATER_COMMAND_START) {
+    if (command.kind == HEATER_COMMAND_START || command.kind == HEATER_COMMAND_RESISTANCE_START) {
         char reply[128];
         snprintf(reply, sizeof(reply), "{\"ack\":\"START\",\"run_id\":%u,\"next\":%" PRIu64 "}",
                  (unsigned)run.id, next);
         return respond(req, "200 OK", reply);
     }
     return respond(req, "200 OK", command.kind == HEATER_COMMAND_SET ? "{\"ack\":\"SET\"}" : "{\"ack\":\"PING\"}");
+}
+
+// 所有新增路由仍使用原 Bearer token 和 OTA 操作门闩。
+static esp_err_t controllers_handler(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    unsigned count; const controller_descriptor_t *items=heater_controller_registry(&count);
+    cJSON *root=cJSON_CreateObject(), *algorithms=cJSON_CreateArray();
+    if (!root || !algorithms) { cJSON_Delete(root);cJSON_Delete(algorithms);return ESP_ERR_NO_MEM; }
+    cJSON_AddItemToObject(root,"algorithms",algorithms);
+    for (unsigned i=0;i<count;++i) {
+        cJSON *item=cJSON_CreateObject();
+        if (!item) {cJSON_Delete(root);return ESP_ERR_NO_MEM;}
+        cJSON_AddNumberToObject(item,"id",items[i].id); cJSON_AddStringToObject(item,"name",items[i].name);
+        cJSON_AddStringToObject(item,"version",items[i].version);
+        cJSON *params=cJSON_AddArrayToObject(item,"parameters");
+        for(unsigned j=0;j<items[i].parameter_count;++j) {
+            const controller_parameter_t *p=&items[i].parameters[j];cJSON *v=cJSON_CreateObject();
+            cJSON_AddStringToObject(v,"name",p->name);cJSON_AddNumberToObject(v,"count",p->count);
+            cJSON_AddNumberToObject(v,"min",p->minimum);cJSON_AddNumberToObject(v,"max",p->maximum);
+            cJSON_AddNumberToObject(v,"default",p->default_value);cJSON_AddItemToArray(params,v);
+        }
+        cJSON_AddItemToArray(algorithms,item);
+    }
+    char *body=cJSON_PrintUnformatted(root); cJSON_Delete(root);
+    if (!body) return ESP_ERR_NO_MEM;
+    const esp_err_t result=respond(req,"200 OK",body);free(body);return result;
+}
+static esp_err_t experiments_handler(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    heater_config_record_t records[8];const unsigned count=heater_control_config_history(records);
+    unsigned algorithms;const controller_descriptor_t *registry=heater_controller_registry(&algorithms);
+    cJSON *root=cJSON_CreateObject();if(!root) return ESP_ERR_NO_MEM;
+    cJSON_AddStringToObject(root,"boot_id",s_boot_id);
+    cJSON_AddStringToObject(root,"firmware",esp_app_get_description()->version);
+    cJSON_AddNumberToObject(root,"period_us",HEATER_PERIOD_US);
+    cJSON_AddNumberToObject(root,"delay_cycles",CONTROLLER_DELAY_CYCLES);
+    const float references[4]={CONFIG_HEATER_REFERENCE_1_MOHM,CONFIG_HEATER_REFERENCE_2_MOHM,CONFIG_HEATER_REFERENCE_3_MOHM,CONFIG_HEATER_REFERENCE_4_MOHM};
+    const float offsets[4]={CONFIG_HEATER_OFFSET_1_MOHM,CONFIG_HEATER_OFFSET_2_MOHM,CONFIG_HEATER_OFFSET_3_MOHM,CONFIG_HEATER_OFFSET_4_MOHM};
+    cJSON_AddItemToObject(root,"reference_mohm",cJSON_CreateFloatArray(references,4));
+    cJSON_AddItemToObject(root,"offset_mohm",cJSON_CreateFloatArray(offsets,4));
+    cJSON *array=cJSON_AddArrayToObject(root,"configurations");
+    for(unsigned i=0;i<count;++i) {
+        const controller_config_t *c=&records[i].config;cJSON *record=cJSON_CreateObject();
+        cJSON_AddNumberToObject(record,"config_id",records[i].config_id);
+        cJSON_AddNumberToObject(record,"algorithm",c->algorithm);
+        cJSON_AddItemToObject(record,"target",cJSON_CreateFloatArray(c->target,4));
+        cJSON_AddNumberToObject(record,"max_duty",c->max_duty);
+        cJSON_AddNumberToObject(record,"tolerance_ohm",c->tolerance_ohm);
+        cJSON *params=cJSON_AddObjectToObject(record,"parameters");
+        for(unsigned j=0;j<algorithms;++j) if(registry[j].id==c->algorithm) {
+            cJSON_AddStringToObject(record,"algorithm_version",registry[j].version);
+            for(unsigned k=0;k<registry[j].parameter_count;++k) {
+                const controller_parameter_t *p=&registry[j].parameters[k];
+                if(p->count==1) cJSON_AddNumberToObject(params,p->name,c->parameters[p->offset]);
+                else cJSON_AddItemToObject(params,p->name,cJSON_CreateFloatArray(c->parameters+p->offset,p->count));
+            }
+        }
+        cJSON_AddItemToArray(array,record);
+    }
+    char *body=cJSON_PrintUnformatted(root);cJSON_Delete(root);
+    if(!body) return ESP_ERR_NO_MEM;
+    const esp_err_t result=respond(req,"200 OK",body);free(body);return result;
+}
+static bool json_four(const cJSON *root, const char *key, float output[4])
+{
+    const cJSON *array=cJSON_GetObjectItemCaseSensitive(root,key);
+    if (!cJSON_IsArray(array) || cJSON_GetArraySize(array)!=4) return false;
+    for (unsigned i=0;i<4;++i) {
+        const cJSON *n=cJSON_GetArrayItem(array,i);
+        if (!cJSON_IsNumber(n) || !isfinite(n->valuedouble)) return false;
+        output[i]=(float)n->valuedouble;
+    }
+    return true;
+}
+static bool json_float(const cJSON *root,const char *key,float *output)
+{
+    const cJSON *n=cJSON_GetObjectItemCaseSensitive(root,key);
+    if (!cJSON_IsNumber(n) || !isfinite(n->valuedouble)) return false;
+    *output=(float)n->valuedouble;return true;
+}
+static esp_err_t controller_config_handler(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    if (!verified() || xSemaphoreTake(s_operation,0)!=pdTRUE)
+        return respond(req,"409 Conflict","{\"error\":\"BUSY_OR_SELF_TEST_PENDING\"}");
+    char body[1500]; esp_err_t result=ESP_ERR_INVALID_ARG;
+    cJSON *root=NULL;
+    if (req->content_len>0 && req->content_len<sizeof(body) && receive_exact(req,body,req->content_len)==ESP_OK) {
+        body[req->content_len]=0;
+        root=cJSON_ParseWithLengthOpts(body,req->content_len+1,NULL,true);
+        const char *keys[]={"algorithm","target","parameters","tolerance_ohm","max_duty"};
+        unsigned seen=0; bool valid=cJSON_IsObject(root);
+        const cJSON *item;
+        cJSON_ArrayForEach(item,root) {
+            unsigned i;
+            for(i=0;i<5;++i) if(item->string && !strcmp(item->string,keys[i])) break;
+            if(i==5 || (seen&(1U<<i))) {valid=false;break;}
+            seen|=1U<<i;
+        }
+        controller_config_t config={0};
+        const cJSON *id=cJSON_GetObjectItemCaseSensitive(root,"algorithm");
+        const cJSON *parameters=cJSON_GetObjectItemCaseSensitive(root,"parameters");
+        if (valid && seen==31 && cJSON_IsNumber(id) && id->valuedouble>=1 && id->valuedouble<=255 &&
+            id->valuedouble==floor(id->valuedouble) && cJSON_IsObject(parameters) &&
+            json_four(root,"target",config.target) && json_float(root,"tolerance_ohm",&config.tolerance_ohm) &&
+            json_float(root,"max_duty",&config.max_duty)) {
+            config.algorithm=(uint32_t)id->valuedouble;
+            unsigned count; const controller_descriptor_t *registry=heater_controller_registry(&count),*descriptor=NULL;
+            for(unsigned i=0;i<count;++i) if(registry[i].id==config.algorithm) descriptor=&registry[i];
+            valid=descriptor && descriptor->parameter_count<=16;seen=0;
+            cJSON_ArrayForEach(item,parameters) {
+                if(!valid) break;
+                unsigned i;
+                for(i=0;i<descriptor->parameter_count;++i) if(item->string && !strcmp(item->string,descriptor->parameters[i].name)) break;
+                if(i==descriptor->parameter_count || (seen&(1U<<i))) {valid=false;break;}
+                const controller_parameter_t *p=&descriptor->parameters[i];
+                if(!p->count || p->offset+p->count>32) {valid=false;break;}
+                for(unsigned j=0;j<p->count;++j) {
+                    const cJSON *value=p->count==1 ? item : cJSON_GetArrayItem(item,j);
+                    if((p->count>1 && (!cJSON_IsArray(item) || cJSON_GetArraySize(item)!=(int)p->count)) ||
+                       !cJSON_IsNumber(value) || !isfinite(value->valuedouble) ||
+                       value->valuedouble<p->minimum || value->valuedouble>p->maximum) {valid=false;break;}
+                    config.parameters[p->offset+j]=(float)value->valuedouble;
+                }
+                seen|=1U<<i;
+            }
+            if(valid && seen==((1U<<descriptor->parameter_count)-1U)) result=heater_control_configure(&config);
+        }
+    }
+    cJSON_Delete(root);xSemaphoreGive(s_operation);
+    if(result==ESP_OK) return respond(req,"200 OK","{\"ack\":\"CONFIGURED\",\"running\":false}");
+    return respond(req,result==ESP_ERR_INVALID_STATE ? "409 Conflict" : "400 Bad Request",
+                   "{\"error\":\"INVALID_CONFIG_OR_NOT_IDLE\"}");
 }
 
 // 鉴权并取得维护操作门闩，确认控制暂停后回复有效请求 `req` 并延时重启。
@@ -491,8 +653,8 @@ esp_err_t device_web_start(esp_err_t control_init_result)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 0;
     config.task_priority = 4;
-    config.stack_size = 10240;
-    config.max_uri_handlers = 7;
+    config.stack_size = 14336;
+    config.max_uri_handlers = 10;
     config.max_open_sockets = 6;
     config.recv_wait_timeout = 2;
     config.send_wait_timeout = 1;
@@ -501,6 +663,9 @@ esp_err_t device_web_start(esp_err_t control_init_result)
     if (result != ESP_OK) return result;
     const httpd_uri_t routes[] = {
         {.uri = "/", .method = HTTP_GET, .handler = index_handler},
+        {.uri = "/api/experiments", .method = HTTP_GET, .handler = experiments_handler},
+        {.uri = "/api/controllers", .method = HTTP_GET, .handler = controllers_handler},
+        {.uri = "/api/controller/config", .method = HTTP_POST, .handler = controller_config_handler},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_handler},
         {.uri = "/api/data", .method = HTTP_GET, .handler = data_handler},
         {.uri = "/api/control", .method = HTTP_POST, .handler = command_handler},

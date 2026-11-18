@@ -5,7 +5,8 @@
 - 目标为 `esp32s3`；使用 VS Code ESP-IDF 扩展和 Linux Dev Container，固定 ESP-IDF v6.1.1（`/opt/esp/idf`）、用户 `vscode`。终端环境未加载时执行 `. /opt/esp/idf/export.sh`。
 - Flash 为 16 MB，正常通信使用 USB-OTG CDC-NCM HTTP/WebSocket，日志及 STOP 救援命令使用同一复合设备的 CDC-ACM；运行时内置 USB Serial/JTAG 与 OTG 不能共用内部 PHY。PSRAM 已实板确认 8 MB、Octal 80 MHz 并通过启动测试；使用 4 MiB 历史缓存。CPU 使用 240 MHz、性能优化编译，ADC SPI 为 2 MHz 且由一个设备句柄独占。
 - 当前安全输出上限为 2（`CONFIG_HEATER_OUTPUT_DUTY_LIMIT`），不得未经用户明确授权提高。已完成 USB NCM/ACM、HTTP/WebSocket、OTA、额外供电下拔线及四路最大占空比 2 的实板测试；旧 Wi-Fi 版本已验证启动失败回滚；后续变更仍需检查采样时序、无效帧、任务栈余量及输出关断。硬件精度校准和示波器验证另行进行。
-- 上电默认空闲，SET 只更新设定，START 才开始加热与历史记录；STOP 或控制租约到期停止记录。后台安全样本用于通道许可和 OTA 自检，不写入历史缓存。
+- 算法放在 `heater_controller`，继承 C++ `Controller` 并注册参数描述；算法任务在 Core 0，k 帧结果用于 k+2 周期，不访问 GPIO、不续约、不写 Flash。恒电阻配置需空闲且准备完成后 RSTART；PWM 支持 0.5% 步进，仍保持全局上限 2。数据 schema 2，实验配置和 CSV 须一起保存。
+- 上电默认空闲，SET 只更新设定，START/RSTART 才开始加热与历史记录；STOP 或控制租约到期停止记录。后台安全样本用于通道许可和 OTA 自检，不写入历史缓存。
 - 分区布局见 `partitions.csv`，使用两个 4 MiB 应用分区及 `otadata`。首次迁移需 USB 完整烧录；日常 OTA 仅上传应用 `.bin`。OTA、运行时 NVS 保存及启动版本确认写 Flash 前，必须获得控制任务的暂停确认。
 - 入口为 `main/app_main.c`；业务模块放在 `components/<组件名>/`，组件内包含 `CMakeLists.txt` 和公共头文件目录 `include/`。
 - 根工程启用 `MINIMAL_BUILD`；通过 `idf_component_register` 声明源文件、头文件目录及依赖。实现依赖使用 `PRIV_REQUIRES`，公共头文件依赖使用 `REQUIRES`；使用 FreeRTOS 的组件显式声明 `freertos` 依赖。

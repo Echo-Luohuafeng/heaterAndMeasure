@@ -25,7 +25,9 @@ bool heater_command_parse(const char *line, size_t length, heater_command_t *com
         --length;
     }
     heater_command_t parsed = {0};
-    if (length == 4 && memcmp(line, "STOP", 4) == 0) {
+    if (length == 6 && memcmp(line, "RSTART", 6) == 0) {
+        parsed.kind = HEATER_COMMAND_RESISTANCE_START;
+    } else if (length == 4 && memcmp(line, "STOP", 4) == 0) {
         parsed.kind = HEATER_COMMAND_STOP;
     } else if (length == 4 && memcmp(line, "PING", 4) == 0) {
         parsed.kind = HEATER_COMMAND_PING;

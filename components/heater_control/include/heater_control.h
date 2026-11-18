@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "heater_protocol.h"
+#include "heater_controller.h"
 
 // 初始化输出、ADC、阶段定时器和 DRDY 中断，不启动周期任务。
 // `outbound` 必须是可容纳 heater_message_t 的非空队列，并保持到任务结束。
@@ -49,3 +50,20 @@ typedef struct {
 } heater_timing_stats_t;
 // 返回受临界区保护的 ADC 启动及读取时序统计快照。
 heater_timing_stats_t heater_control_timing_stats(void);
+
+// 仅空闲且非维护状态允许配置；不写 Flash、不开始运行。
+esp_err_t heater_control_configure(const controller_config_t *config);
+typedef struct {
+    bool resistance_mode;
+    bool ready;
+    uint32_t config_id;
+    controller_config_t config;
+    uint32_t worker_stack_free_bytes;
+    uint32_t controller_faults;
+    uint32_t lease_refreshes, lease_remaining_ms;
+} heater_controller_status_t;
+heater_controller_status_t heater_control_controller_status(void);
+
+typedef struct { uint32_t config_id; controller_config_t config; } heater_config_record_t;
+// 最近八份恒电阻配置，运行期间不写 Flash；导出实验时应同时保存这些元数据。
+unsigned heater_control_config_history(heater_config_record_t records[8]);

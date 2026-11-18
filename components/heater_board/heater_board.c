@@ -7,6 +7,7 @@
 
 #define PWM_RESOLUTION_HZ 2000000U
 #define PWM_PERIOD_TICKS (PWM_RESOLUTION_HZ / HEATER_PWM_FREQUENCY_HZ)
+_Static_assert(PWM_PERIOD_TICKS == 200, "PWM ticks must represent 0.5 percent");
 
 const int heater_pwm_gpio[HEATER_CHANNEL_COUNT] = {4, 5, 6, 7};
 const int heater_adc_cs_gpio[HEATER_CHANNEL_COUNT] = {8, 9, 10, 14};
@@ -52,28 +53,30 @@ bool IRAM_ATTR heater_board_pwm_low(void)
 // 任一步失败立即返回 false，由控制层执行请求关断与故障锁定。
 bool IRAM_ATTR heater_board_pwm_apply(const uint8_t duty[HEATER_CHANNEL_COUNT])
 {
-    // 最后一道输出边界：任何超限值均先关断全部输出，拒绝更新比较器。
-    for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
+    uint8_t ticks[4];
+    for (size_t i=0;i<4;++i) {
         if (duty[i] > CONFIG_HEATER_OUTPUT_DUTY_LIMIT) {
-            heater_board_requests_off();
-            heater_board_pwm_low();
-            return false;
+            heater_board_requests_off(); heater_board_pwm_low(); return false;
+        }
+        ticks[i]=duty[i]*2U;
+    }
+    return heater_board_pwm_apply_ticks(ticks);
+}
+
+bool IRAM_ATTR heater_board_pwm_apply_ticks(const uint8_t ticks[4])
+{
+    for (size_t i=0;i<4;++i) {
+        if (ticks[i]>CONFIG_HEATER_OUTPUT_DUTY_LIMIT*2U) {
+            heater_board_requests_off(); heater_board_pwm_low(); return false;
         }
     }
-    // 装载完四路比较寄存器前保持 PWM 强制为低，避免通道先后生效。
-    for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
-        const uint32_t compare = duty[i] ? PWM_PERIOD_TICKS * duty[i] / 100U : 1U;
-        if (mcpwm_comparator_set_compare_value(s_comparator[i], compare) != ESP_OK) {
+    for (size_t i=0;i<4;++i) {
+        if (mcpwm_comparator_set_compare_value(s_comparator[i], ticks[i] ? ticks[i] : 1U)!=ESP_OK)
             return false;
-        }
     }
-    if (mcpwm_soft_sync_activate(s_sync) != ESP_OK) {
-        return false;
-    }
-    for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
-        if (duty[i] && mcpwm_generator_set_force_level(s_generator[i], -1, true) != ESP_OK) {
-            return false;
-        }
+    if (mcpwm_soft_sync_activate(s_sync)!=ESP_OK) return false;
+    for (size_t i=0;i<4;++i) {
+        if (ticks[i] && mcpwm_generator_set_force_level(s_generator[i],-1,true)!=ESP_OK) return false;
     }
     return true;
 }

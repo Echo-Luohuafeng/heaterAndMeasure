@@ -38,3 +38,6 @@ void heater_board_heat_request(bool enabled);
 // 将测量请求设为 `enabled`，可在 ISR 中调用。
 // 调用方必须先关闭加热请求并预留互锁切换时间。
 void heater_board_measure_request(bool enabled);
+
+// 0.5 个百分点的 PWM 比较器计数；与整数接口使用相同的安全上限。
+bool heater_board_pwm_apply_ticks(const uint8_t ticks[4]);

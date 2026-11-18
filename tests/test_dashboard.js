@@ -28,10 +28,11 @@ const context = vm.createContext({document,window:{devicePixelRatio:1,addEventLi
  async fetch(url,options){requests.push({url,...options});assert.equal(options.headers.Authorization,'Bearer '+TOKEN);
   if(options.body?.startsWith?.('START')){status.running=true;status.recording=true;status.maintenance=false;}
   if(options.body==='STOP'){status.running=false;status.recording=false;}
-  const body=options.body?.startsWith?.('START')?{ack:'START',run_id:1,next:1}:url.startsWith('/api/status')?status:url.startsWith('/api/data')?
+  const body=url==='/api/controllers'?{algorithms:[{id:1,name:'pid',parameters:[{name:'kp',count:4,default:0.5},{name:'ki',count:4,default:0.05},{name:'kd',count:4,default:0},{name:'derivative_tau_s',count:1,default:0.1},{name:'tracking_gain',count:1,default:1}]}]}:options.body?.startsWith?.('START')?{ack:'START',run_id:1,next:1}:url.startsWith('/api/status')?status:url.startsWith('/api/data')?
    {schema:1,boot_id:'test',next:2,lost:0,more:false,frames:[FRAME]}:{ack:'OK'};
   return {ok:true,json:async()=>structuredClone(body)};
  }});
+document.getElementById('controlMode').value='manual';
 vm.runInContext(source,context,{filename:'embedded-dashboard.js'});
 const element=id=>document.getElementById(id);
 async function run(){
@@ -76,6 +77,12 @@ async function run(){
  element('duty0').value='3';const beforeLimit=requests.length;await element('set').onclick();
  assert.equal(requests.length,beforeLimit);assert.match(element('message').textContent,/0–2/);
  element('duty0').value='2';await element('set').onclick();assert.equal(requests.at(-1).body,'SET 2 0 0 0');
+ element('controlMode').value='resistance';element('tolerance').value='0.05';element('outputLimit').value='2';
+ for(let i=0;i<4;i++)element(`target${i}`).value='112';
+ await element('set').onclick();assert.equal(requests.at(-1).url,'/api/controller/config');
+ assert.equal(JSON.parse(requests.at(-1).body).target[0],112);
+ element('hold').checked=false;await element('start').onclick();await new Promise(setImmediate);
+ assert(requests.some(r=>r.body==='RSTART'));
  console.log('Dashboard explicit START, staged SET, opt-in heartbeat, hidden-tab heartbeat, STOP and CSV tests passed');
 }
 run().catch(error=>{console.error(error);process.exitCode=1;});

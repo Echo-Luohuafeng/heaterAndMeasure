@@ -33,6 +33,10 @@ void heater_board_requests_off(void) { heat_request = measure_request = false; }
 void heater_board_heat_request(bool enabled) { assert(!enabled || !measure_request); heat_request = enabled; }
 void heater_board_measure_request(bool enabled) { assert(!enabled || !heat_request); measure_request = enabled; }
 bool heater_board_pwm_low(void) { memset(pwm, 0, sizeof(pwm)); fake_now += driver_time_us; return pwm_ok; }
+bool heater_board_pwm_apply_ticks(const uint8_t ticks[4]) { for(unsigned i=0;i<4;++i) pwm[i]=ticks[i];return pwm_ok; }
+QueueHandle_t xQueueCreate(UBaseType_t count,UBaseType_t size) {(void)count;(void)size;return (void*)5;}
+BaseType_t xQueueReceive(QueueHandle_t q,void *out,TickType_t t) {(void)q;(void)out;(void)t;return pdFALSE;}
+BaseType_t xQueueOverwrite(QueueHandle_t q,const void *data) {(void)q;(void)data;return pdTRUE;}
 bool heater_board_pwm_apply(const uint8_t duty[4]) { memcpy(pwm, duty, 4); fake_now += driver_time_us; return pwm_ok; }
 esp_err_t ads1220_init(void) { return ESP_OK; }
 esp_err_t ads1220_start(size_t channel) { (void)channel; fake_now += adc_start_time_us; return ESP_OK; }
@@ -58,7 +62,7 @@ BaseType_t xTaskCreate(void (*entry)(void *), const char *name, uint32_t stack, 
 { (void)entry; (void)name; (void)stack; (void)arg; (void)priority; *task = (void *)1; return pdPASS; }
 BaseType_t xTaskCreatePinnedToCore(void (*entry)(void *), const char *name, uint32_t stack, void *arg,
                                  UBaseType_t priority, TaskHandle_t *task, BaseType_t core)
-{ assert(core == 1); return xTaskCreate(entry, name, stack, arg, priority, task); }
+{ assert(core == 0 || core == 1); return xTaskCreate(entry, name, stack, arg, priority, task); }
 BaseType_t xTaskNotify(TaskHandle_t task, uint32_t bits, int action)
 { (void)task; (void)action; notifications |= bits; return pdPASS; }
 SemaphoreHandle_t xSemaphoreCreateBinary(void) { return (void *)3; }
@@ -187,8 +191,48 @@ static void reach_conversion(void)
     start_conversion(s_control.sequence);
 }
 
+static void test_resistance_pipeline(void)
+{
+    reset();
+    controller_config_t config={.algorithm=CONTROLLER_PID,.max_duty=2,.tolerance_ohm=.05f};
+    config.parameters[12]=.1f;config.parameters[13]=1;
+    for(unsigned i=0;i<4;++i) {config.target[i]=110;config.parameters[i]=.5f;}
+    assert(heater_control_configure(&config)==ESP_OK && !s_control.command_active);
+    const heater_command_t start={.kind=HEATER_COMMAND_RESISTANCE_START};
+    const heater_command_t stop={.kind=HEATER_COMMAND_STOP};
+    s_control.ready_config_id=s_control.config_id;
+    assert(heater_control_submit(&start)==ESP_OK);
+    const uint64_t lease=s_control.lease_deadline_us;
+    assert(heater_control_configure(&config)==ESP_ERR_INVALID_STATE);
+    s_control.sequence=2;s_control.healthy_sequence=2;s_control.healthy_mask=15;s_control.bootstrap_ready=true;
+    s_control.next_cycle_start_us=60000;s_control.alarm.alarm_count=60000;
+    s_control.results[3].run_id=s_control.run_id;s_control.results[3].config_id=s_control.config_id;
+    s_control.results[3].apply_sequence=3;s_control.results[3].output.source_sequence=1;
+    s_control.results[3].output.valid=true;
+    for(unsigned i=0;i<4;++i) s_control.results[3].output.ticks[i]=3;
+    fire(0);
+    for(unsigned i=0;i<4;++i) assert(pwm[i]==3); // 1.5 percent, not integer rounding.
+    assert(s_control.applied_experiment.source_sequence==1 && s_control.lease_deadline_us==lease);
+    s_control.next_phase=PHASE_START;s_control.next_cycle_start_us=80000;s_control.alarm.alarm_count=80000;
+    s_control.healthy_sequence=3;s_control.healthy_mask=15;s_control.bootstrap_ready=true;
+    fire(0); // Missing result shuts down rather than retaining the old output.
+    assert(!s_control.command_active && s_control.controller_faults==1);
+    for(unsigned i=0;i<4;++i) assert(pwm[i]==0);
+    assert(heater_control_submit(&stop)==ESP_OK);
+    assert(heater_control_submit(&start)==ESP_OK);
+    const unsigned slot=(s_control.start_sequence+2)%4;
+    s_control.results[slot].apply_sequence=s_control.start_sequence+2;
+    s_control.results[slot].run_id=s_control.run_id-1;s_control.results[slot].config_id=s_control.config_id;
+    s_control.sequence=s_control.start_sequence+1;s_control.healthy_sequence=s_control.sequence;
+    s_control.next_phase=PHASE_START;s_control.next_cycle_start_us=160000;s_control.alarm.alarm_count=160000;
+    s_control.bootstrap_ready=true;fire(0);
+    assert(!s_control.command_active); // A previous run cannot revive heating.
+    puts("Resistance pipeline, half-percent output, no auto-lease, deadlines and stale run rejection passed");
+}
+
 int main(void)
 {
+    test_resistance_pipeline();
     if (CONFIG_HEATER_OUTPUT_DUTY_LIMIT == 2) {
         reset();
         const heater_command_t allowed = {.kind = HEATER_COMMAND_START, .duty = {2, 2, 2, 2}};

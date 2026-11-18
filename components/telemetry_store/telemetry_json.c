@@ -18,13 +18,22 @@ int telemetry_record_json(const telemetry_record_t *record, char *output, size_t
             strcpy(resistance[i], "null");
         }
     }
+    const heater_experiment_t *e=&f->experiment;
     const int length = snprintf(output, capacity,
-        "[%" PRIu64 ",%" PRIu32 ",%" PRIu64 ",[%u,%u,%u,%u],[%s,%s,%s,%s],%u,%" PRIu32
-        ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 "]",
+        "[%" PRIu64 ",%" PRIu32 ",%" PRIu64 ",[%.1f,%.1f,%.1f,%.1f],[%s,%s,%s,%s],%u,%" PRIu32
+        ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ","
+        "{\"run_id\":%u,\"config_id\":%u,\"mode\":%u,\"algorithm\":%u,"
+        "\"target\":[%.6f,%.6f,%.6f,%.6f],\"requested\":[%.6f,%.6f,%.6f,%.6f],"
+        "\"limited_mask\":%u,\"blocked_mask\":%u,\"source_sequence\":%u,\"computation_us\":%u}]",
         record->cursor, f->sequence, f->cycle_start_us,
-        f->duty[0], f->duty[1], f->duty[2], f->duty[3],
+        e->mode ? e->pwm_ticks[0]*0.5 : f->duty[0], e->mode ? e->pwm_ticks[1]*0.5 : f->duty[1],
+        e->mode ? e->pwm_ticks[2]*0.5 : f->duty[2], e->mode ? e->pwm_ticks[3]*0.5 : f->duty[3],
         resistance[0], resistance[1], resistance[2], resistance[3], f->valid_mask,
-        f->faults, f->deadline_misses, f->telemetry_drops, f->control_stack_free_bytes);
+        f->faults, f->deadline_misses, f->telemetry_drops, f->control_stack_free_bytes,
+        (unsigned)e->run_id,(unsigned)e->config_id,e->mode,e->algorithm,
+        (double)e->target[0],(double)e->target[1],(double)e->target[2],(double)e->target[3],
+        (double)e->requested[0],(double)e->requested[1],(double)e->requested[2],(double)e->requested[3],
+        e->limited_mask,e->blocked_mask,(unsigned)e->source_sequence,(unsigned)e->computation_us);
     return length < 0 || (size_t)length >= capacity ? -1 : length;
 }
 

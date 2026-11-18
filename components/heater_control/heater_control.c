@@ -1,6 +1,7 @@
 #include "heater_control.h"
 
 #include <math.h>
+#include "heater_controller.h"
 #include <string.h>
 
 #include "ads1220.h"
@@ -106,6 +107,19 @@ typedef struct {
     SemaphoreHandle_t pause_ack;
     SemaphoreHandle_t lifecycle;
     heater_timing_stats_t timing;
+    bool resistance_mode;
+    uint32_t config_id, ready_config_id, start_sequence, controller_faults;
+    controller_config_t config;
+    heater_experiment_t applied_experiment;
+    struct {
+        uint32_t run_id, config_id, apply_sequence, computation_us;
+        controller_output_t output;
+    } results[4];
+    QueueHandle_t controller_queue;
+    TaskHandle_t controller_task;
+    uint32_t worker_stack_free_bytes;
+    uint32_t lease_refreshes;
+    heater_config_record_t config_history[8];
 } control_t;
 
 static control_t s_control = {.lock = portMUX_INITIALIZER_UNLOCKED};
@@ -118,6 +132,7 @@ typedef struct {
     uint8_t duty[HEATER_CHANNEL_COUNT];
     uint8_t ready_mask;
     uint32_t faults;
+    heater_experiment_t experiment;
 } snapshot_t;
 
 // 在短临界区内复制阶段、周期及通道状态，供任务在锁外处理采样。
@@ -131,6 +146,7 @@ static snapshot_t snapshot(void)
     memcpy(result.duty, s_control.applied, sizeof(result.duty));
     result.ready_mask = s_control.ready_mask;
     result.faults = s_control.faults;
+    result.experiment = s_control.applied_experiment;
     portEXIT_CRITICAL(&s_control.lock);
     return result;
 }
@@ -207,16 +223,48 @@ static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_ev
                 s_control.faults |= HEATER_FAULT_TIMING;
                 ++s_control.deadline_misses;
             }
+            const unsigned result_slot = s_control.sequence % 4;
+            const bool ready = s_control.results[result_slot].apply_sequence == s_control.sequence &&
+                s_control.results[result_slot].run_id == s_control.run_id &&
+                s_control.results[result_slot].config_id == s_control.config_id;
+            const bool controller_required = s_control.resistance_mode && s_control.command_active;
+            if (controller_required && s_control.sequence - s_control.start_sequence >= CONTROLLER_DELAY_CYCLES && !ready) {
+                s_control.command_active = false;
+                ++s_control.controller_faults;
+                s_control.faults |= HEATER_FAULT_CONTROLLER;
+                heater_board_requests_off(); heater_board_pwm_low();
+            }
+            s_control.applied_experiment = (heater_experiment_t){
+                .run_id = s_control.frame_run_id, .config_id = s_control.config_id,
+                .mode = s_control.resistance_mode,
+                .algorithm = s_control.resistance_mode ? s_control.config.algorithm : 0,
+            };
+            if (s_control.resistance_mode) {
+                memcpy(s_control.applied_experiment.target, s_control.config.target, sizeof(s_control.config.target));
+                if (ready) {
+                    s_control.applied_experiment.source_sequence = s_control.results[result_slot].output.source_sequence;
+                    s_control.applied_experiment.computation_us = s_control.results[result_slot].computation_us;
+                    s_control.applied_experiment.limited_mask = s_control.results[result_slot].output.limited_mask;
+                    memcpy(s_control.applied_experiment.requested, s_control.results[result_slot].output.requested,
+                           sizeof(s_control.applied_experiment.requested));
+                }
+            }
             bool heat = false;
             for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
                 const bool allowed = previous_done && s_control.bootstrap_ready &&
                     !s_control.pwm_failed && s_control.command_active &&
                     (s_control.healthy_mask & (1U << i));
-                s_control.applied[i] = allowed ? s_control.desired[i] : 0;
-                heat |= s_control.applied[i] != 0;
+                const uint8_t ticks = s_control.resistance_mode ?
+                    (ready ? s_control.results[result_slot].output.ticks[i] : 0) : s_control.desired[i]*2U;
+                s_control.applied_experiment.pwm_ticks[i] = allowed ? ticks : 0;
+                if (!allowed) s_control.applied_experiment.blocked_mask |= 1U << i;
+                s_control.applied[i] = s_control.applied_experiment.pwm_ticks[i]/2U;
+                heat |= s_control.applied_experiment.pwm_ticks[i] != 0;
             }
             heater_board_measure_request(false);
-            if (!heater_board_pwm_apply(s_control.applied)) {
+            const bool pwm_ok = s_control.resistance_mode ?
+                heater_board_pwm_apply_ticks(s_control.applied_experiment.pwm_ticks) : heater_board_pwm_apply(s_control.applied);
+            if (!pwm_ok) {
                 pwm_failure();
             } else {
                 heater_board_heat_request(heat);
@@ -450,6 +498,73 @@ static void read_ready(heater_telemetry_t *frame, uint8_t *read_mask)
     }
 }
 
+typedef struct {
+    controller_config_t config;
+    heater_telemetry_t frame;
+    uint32_t run_id, config_id;
+} controller_job_t;
+
+// Core 0、优先级 7、6144 字节；长度一的覆盖队列只保留最新测量，不阻塞采样。
+static void controller_task(void *arg)
+{
+    (void)arg;
+    uint32_t run_id=0, config_id=0;
+    controller_job_t job;
+    for (;;) {
+        if (xQueueReceive(s_control.controller_queue, &job, portMAX_DELAY)!=pdTRUE) continue;
+        const int64_t begin=esp_timer_get_time();
+        bool configured=true;
+        if (config_id!=job.config_id) {
+            configured=heater_controller_configure(&job.config);
+            config_id=job.config_id;
+        }
+        if (!job.run_id) {
+            portENTER_CRITICAL(&s_control.lock);
+            if (s_control.config_id==config_id && s_control.resistance_mode && !s_control.command_active)
+                s_control.ready_config_id=configured ? config_id : 0;
+            portEXIT_CRITICAL(&s_control.lock);
+            continue;
+        }
+        if (run_id!=job.run_id) {heater_controller_reset();run_id=job.run_id;}
+        controller_applied_t applied={.source_sequence=job.frame.experiment.source_sequence,
+                                      .blocked_mask=job.frame.experiment.blocked_mask,
+                                      .limited_mask=job.frame.experiment.limited_mask};
+        for (unsigned i=0;i<4;++i) {
+            applied.requested[i]=job.frame.experiment.requested[i];
+            applied.applied[i]=(job.frame.faults & (HEATER_FAULT_STOPPED|HEATER_FAULT_TIMING|HEATER_FAULT_PWM)) ?
+                0 : job.frame.experiment.pwm_ticks[i]*0.5f;
+        }
+        heater_controller_on_applied(&applied);
+        controller_input_t input={.sequence=job.frame.sequence, .sample_time_us=job.frame.cycle_start_us,
+                                  .valid_mask=job.frame.valid_mask};
+        memcpy(input.resistance,job.frame.resistance_ohm,sizeof(input.resistance));
+        controller_output_t output=configured ? heater_controller_step(&input) : (controller_output_t){0};
+        for (unsigned i=0;i<4;++i)
+            if (!isfinite(output.requested[i]) || output.ticks[i]>CONFIG_HEATER_OUTPUT_DUTY_LIMIT*2U ||
+                output.ticks[i]>job.config.max_duty*2.0f) output.valid=false;
+        const uint32_t apply_sequence=job.frame.sequence+CONTROLLER_DELAY_CYCLES;
+        const uint32_t elapsed=(uint32_t)(esp_timer_get_time()-begin);
+        const uint32_t stack=uxTaskGetStackHighWaterMark(NULL);
+        portENTER_CRITICAL(&s_control.lock);
+        s_control.worker_stack_free_bytes=stack;
+        if (s_control.command_active && s_control.resistance_mode && !s_control.maintenance &&
+            s_control.run_id==job.run_id && s_control.config_id==job.config_id) {
+            if (!output.valid) {
+                s_control.command_active=false;
+                ++s_control.controller_faults;
+                s_control.faults |= HEATER_FAULT_CONTROLLER;
+                heater_board_requests_off(); heater_board_pwm_low();
+            } else if ((int32_t)(apply_sequence-s_control.sequence)>0) {
+                const unsigned slot=apply_sequence%4;
+                s_control.results[slot].run_id=run_id; s_control.results[slot].config_id=config_id;
+                s_control.results[slot].apply_sequence=apply_sequence;
+                s_control.results[slot].computation_us=elapsed; s_control.results[slot].output=output;
+            }
+        }
+        portEXIT_CRITICAL(&s_control.lock);
+    }
+}
+
 // 汇总 `frame` 的故障，按 `aborted` 和 `read_mask` 判定有效性并更新下周期许可。
 // 无效电阻写为 NAN；内部安全快照始终更新，只有当前显式运行才非阻塞入队。
 // `frame` 须非空；跨周期结果丢弃，队列满仅累计丢帧，不等待缓存或网络。
@@ -489,6 +604,14 @@ static void publish(heater_telemetry_t *frame, bool aborted, uint8_t read_mask)
                         s_control.frame_run_id == s_control.run_id;
     const uint32_t run_id = s_control.frame_run_id;
     portEXIT_CRITICAL(&s_control.lock);
+    // 仅当前运行的有效身份提交算法工作；自动输出不续约上位机租约。
+    controller_job_t job;
+    portENTER_CRITICAL(&s_control.lock);
+    const bool compute=record && s_control.resistance_mode;
+    if (compute) job=(controller_job_t){.config=s_control.config,.frame=*frame,
+                                      .run_id=run_id,.config_id=s_control.config_id};
+    portEXIT_CRITICAL(&s_control.lock);
+    if (compute) xQueueOverwrite(s_control.controller_queue,&job);
     if (!record) return;
     const heater_message_t message = {.kind = HEATER_MESSAGE_DATA, .run_id = run_id, .data = *frame};
     if (xQueueSend(s_control.outbound, &message, 0) != pdPASS) {
@@ -534,6 +657,7 @@ static void control_task(void *arg)
                 .resistance_ohm = {NAN, NAN, NAN, NAN},
             };
             memcpy(frame.duty, current.duty, sizeof(frame.duty));
+            frame.experiment = current.experiment;
             read_mask = 0;
         }
         if ((events & EVENT_CONVERT) && current.phase == PHASE_CONVERT) {
@@ -605,6 +729,11 @@ esp_err_t heater_control_start(void)
     if (s_control.timer == NULL || s_control.task != NULL) {
         return ESP_ERR_INVALID_STATE;
     }
+    s_control.controller_queue=xQueueCreate(1,sizeof(controller_job_t));
+    if (!s_control.controller_queue) return ESP_ERR_NO_MEM;
+    if (xTaskCreatePinnedToCore(controller_task,"heater_algorithm",6144,NULL,7,&s_control.controller_task,0)!=pdPASS)
+        return ESP_ERR_NO_MEM;
+    s_control.config_id=1;
     // 启动初始化及中断分配同样位于 Core 1，见 app_main。
     if (xTaskCreatePinnedToCore(control_task, "heater_cycle", CONTROL_TASK_STACK_BYTES, NULL,
                     CONTROL_TASK_PRIORITY, &s_control.task, 1) != pdPASS) {
@@ -638,7 +767,7 @@ esp_err_t heater_control_submit(const heater_command_t *command)
                 return ESP_ERR_INVALID_ARG;
             }
         }
-    } else if (command->kind != HEATER_COMMAND_STOP && command->kind != HEATER_COMMAND_PING) {
+    } else if (command->kind != HEATER_COMMAND_STOP && command->kind != HEATER_COMMAND_PING && command->kind != HEATER_COMMAND_RESISTANCE_START) {
         return ESP_ERR_INVALID_ARG;
     }
     uint64_t now;
@@ -648,6 +777,17 @@ esp_err_t heater_control_submit(const heater_command_t *command)
         portEXIT_CRITICAL(&s_control.lock);
         return ESP_ERR_INVALID_STATE;
     }
+    if ((command->kind == HEATER_COMMAND_RESISTANCE_START ||
+         (command->kind == HEATER_COMMAND_START && s_control.resistance_mode)) && s_control.command_active) {
+        portEXIT_CRITICAL(&s_control.lock); return ESP_ERR_INVALID_STATE;
+    }
+    if (command->kind == HEATER_COMMAND_SET && s_control.resistance_mode && s_control.command_active) {
+        portEXIT_CRITICAL(&s_control.lock); return ESP_ERR_INVALID_STATE;
+    }
+    if (command->kind == HEATER_COMMAND_RESISTANCE_START &&
+        (!s_control.resistance_mode || s_control.ready_config_id!=s_control.config_id)) {
+        portEXIT_CRITICAL(&s_control.lock); return ESP_ERR_INVALID_STATE;
+    }
     if (command->kind == HEATER_COMMAND_STOP) {
         s_control.command_active = false;
         s_control.bootstrap_ready = false;
@@ -656,18 +796,29 @@ esp_err_t heater_control_submit(const heater_command_t *command)
         heater_board_pwm_low();
         s_control.host_timeout = false;
         s_control.faults |= HEATER_FAULT_STOPPED;
-    } else if (command->kind == HEATER_COMMAND_SET || command->kind == HEATER_COMMAND_START) {
+    } else if (command->kind == HEATER_COMMAND_SET || command->kind == HEATER_COMMAND_START || command->kind == HEATER_COMMAND_RESISTANCE_START) {
+        if (command->kind == HEATER_COMMAND_SET && s_control.resistance_mode) {
+            s_control.resistance_mode=false; ++s_control.config_id;
+        }
         memcpy(s_control.desired, command->duty, sizeof(s_control.desired));
-        if (command->kind == HEATER_COMMAND_START) {
+        if (command->kind == HEATER_COMMAND_START || command->kind == HEATER_COMMAND_RESISTANCE_START) {
+            if (command->kind == HEATER_COMMAND_START) {
+                s_control.resistance_mode=false;
+                ++s_control.config_id;
+            }
+            s_control.start_sequence=s_control.sequence+1;
+            memset(s_control.results,0,sizeof(s_control.results));
             if (++s_control.run_id == 0) ++s_control.run_id;
             s_control.command_active = true;
         }
         if (s_control.command_active) {
             s_control.host_timeout = false;
             s_control.lease_deadline_us = now + (uint64_t)CONFIG_HEATER_CONTROL_LEASE_MS * 1000;
+            ++s_control.lease_refreshes;
         }
     } else if (s_control.command_active) {
         s_control.lease_deadline_us = now + (uint64_t)CONFIG_HEATER_CONTROL_LEASE_MS * 1000;
+            ++s_control.lease_refreshes;
     }
     portEXIT_CRITICAL(&s_control.lock);
     return ESP_OK;
@@ -804,4 +955,48 @@ esp_err_t heater_control_resume(void)
     }
     xSemaphoreGive(s_control.lifecycle);
     return result;
+}
+
+esp_err_t heater_control_configure(const controller_config_t *config)
+{
+    if (!heater_controller_validate(config) || config->max_duty>CONFIG_HEATER_OUTPUT_DUTY_LIMIT)
+        return ESP_ERR_INVALID_ARG;
+    for (unsigned i=0;i<4;++i)
+        if (config->target[i]<CONFIG_HEATER_VALID_MIN_MOHM/1000.0f ||
+            config->target[i]>CONFIG_HEATER_VALID_MAX_MOHM/1000.0f) return ESP_ERR_INVALID_ARG;
+    portENTER_CRITICAL(&s_control.lock);
+    if (!s_control.task || s_control.command_active || s_control.maintenance) {
+        portEXIT_CRITICAL(&s_control.lock); return ESP_ERR_INVALID_STATE;
+    }
+    s_control.config=*config; s_control.resistance_mode=true; s_control.ready_config_id=0;
+    if (++s_control.config_id==0) ++s_control.config_id;
+    s_control.config_history[s_control.config_id%8]=(heater_config_record_t){s_control.config_id,*config};
+    memset(s_control.desired,0,sizeof(s_control.desired));
+    const controller_job_t job={.config=*config,.config_id=s_control.config_id};
+    portEXIT_CRITICAL(&s_control.lock);
+    xQueueOverwrite(s_control.controller_queue,&job);
+    return ESP_OK;
+}
+heater_controller_status_t heater_control_controller_status(void)
+{
+    uint64_t now=0;
+    if(s_control.timer) gptimer_get_raw_count(s_control.timer,&now);
+    portENTER_CRITICAL(&s_control.lock);
+    const heater_controller_status_t status={.resistance_mode=s_control.resistance_mode,
+        .config_id=s_control.config_id,.ready=s_control.ready_config_id==s_control.config_id,.config=s_control.config,
+        .worker_stack_free_bytes=s_control.worker_stack_free_bytes,.controller_faults=s_control.controller_faults,
+        .lease_refreshes=s_control.lease_refreshes,
+        .lease_remaining_ms=s_control.lease_deadline_us>now ? (s_control.lease_deadline_us-now)/1000 : 0};
+    portEXIT_CRITICAL(&s_control.lock);
+    return status;
+}
+
+unsigned heater_control_config_history(heater_config_record_t records[8])
+{
+    unsigned count=0;
+    portENTER_CRITICAL(&s_control.lock);
+    for(unsigned i=0;i<8;++i) if(s_control.config_history[i].config_id)
+        records[count++]=s_control.config_history[i];
+    portEXIT_CRITICAL(&s_control.lock);
+    return count;
 }

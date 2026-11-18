@@ -6,8 +6,11 @@ VS Code ESP-IDF 扩展和当前 Dev Container。Flash 16 MB，PSRAM 按 Octal 80
 配置，启用启动内存测试。原生 USB 提供 CDC-NCM 网卡，用于网页、数据与 OTA；
 同一接口的 CDC-ACM 串口提供日志和停热救援。PSRAM 已实板验证为 8 MB；当前 CPU 为 240 MHz，启用性能优化编译。
 
+新增四路恒电阻模式与可扩展 C++ 控制器父类，使用说明和算法开发接口见
+[恒电阻控制框架](docs/controller-framework.md)。当前 PID 支持 0.5% 输出步进，输出上限保持 2。
+
 每 20 ms 一个周期：前 15 ms 按四路独立占空比加热，后 5 ms 完成开关切换、
-四路并行转换和数据读取。输入为整数 0～95，以 15 ms 加热窗口为基准；
+四路并行转换和数据读取。手动模式协议输入为整数 0～95，恒电阻模式按 0.5% 步进自动输出，以 15 ms 加热窗口为基准；
 95 对应全周期 71.25%。窗口内硬件 PWM 载波为 10 kHz。
 当前实板固件的安全输出上限固定配置为 **2**，仅接受 0～2；大于 2 的 START/SET
 返回 `DUTY_LIMIT`，控制层及 PWM 驱动再次校验，网页根据状态中的 `max_duty` 限制输入。
@@ -26,7 +29,8 @@ PSRAM 不可用时降级为 32 KiB 内部 RAM；`network_manager` 管理 USB 网
 |---|---:|---:|---:|---|
 | heater_cycle | 20 | 6144 | 1 | GPTimer / DRDY / 维护通知 |
 | sample_store | 6 | 4096 | 0 | 采样队列 |
-| HTTP 服务 | 4 | 10240 | 0 | socket / 服务工作队列 |
+| heater_algorithm | 7 | 6144 | 0 | 最新采样/配置覆盖队列 |
+| HTTP 服务 | 4 | 14336 | 0 | socket / 服务工作队列 |
 | web_push | 3 | 4096 | 0 | 固定 1000 ms 周期 |
 | TinyUSB | 5 | 4096 | 0 | USB 事件队列 |
 | usb_network | 4 | 4096 | 0 | 通知及 10 ms 等待 |
@@ -170,7 +174,7 @@ HTTP/WebSocket 保留原有口令鉴权，未加密；适用于受控的 USB 直
 以便检查通道健康和完成 OTA 启动自检；这些空闲样本只用于内部检查，不进入 PSRAM 历史。
 显式 START 后才每 20 ms 非阻塞提交完整采样，内部队列为 32 条。
 缓存任务及时取样，网络每秒发送通常约 50 帧；有积压时单批最多 100 帧。
-按约 64 字节/记录估算，4 MiB 能保留约 22 分钟，32 KiB 降级缓存约 10 秒，
+schema 2 每条记录约 120 字节，4 MiB 保留 34952 帧、约 11.65 分钟，32 KiB 降级缓存约 5 秒，
 实际容量以 `/api/status` 为准。满缓存覆盖最旧记录并计数，队列满则记录丢帧。
 网络拥塞不等待采样任务。PSRAM 历史断电/重启后丢失，本版不持续写 Flash 日志。
 
@@ -180,6 +184,9 @@ HTTP/WebSocket 保留原有口令鉴权，未加密；适用于受控的 USB 直
 | `GET /api/status` | 启动 ID、版本、网络、缓存、维护/OTA、栈/内存和最近采样 |
 | `GET /api/data?from=1&limit=250&boot=<boot_id>` | 从游标读取，limit 为 1–250；from=0 从最旧记录开始 |
 | `POST /api/control` | `text/plain` 命令 START / SET / PING / STOP，立即回复 |
+| `GET /api/controllers` | 算法及参数描述 |
+| `POST /api/controller/config` | 空闲时配置四路目标及算法参数，不启动 |
+| `GET /api/experiments` | 固件、校准及最近八份实验配置 |
 | `POST /api/reboot` | 确认输出关闭后重启，例如修复 ADC 接线后重新初始化 |
 | `POST /api/ota` | 原始应用 `.bin` 字节流，成功后重启 |
 | `GET /ws?token=<口令>&from=<游标>&boot=<启动ID>` | 鉴权握手后的每秒批量数据 |
@@ -188,7 +195,7 @@ HTTP API 使用 `Authorization: Bearer <口令>`。WebSocket 在握手前校验�
 每秒收到 JSON：
 
 ```json
-{"schema":1,"boot_id":"0123456789abcdef","oldest":1,"next":2,"lost":0,"more":false,"frames":[[1,1,20000,[0,0,0,0],[100.0,null,100.0,100.0],13,2,0,0,2048]]}
+{"schema":2,"boot_id":"0123456789abcdef","oldest":1,"next":2,"lost":0,"more":false,"frames":[[1,1,20000,[0,0,0,0],[100.0,null,100.0,100.0],13,2,0,0,2048,{"run_id":1,"config_id":1,"mode":0,"algorithm":0,"target":[0,0,0,0],"requested":[0,0,0,0],"limited_mask":0,"blocked_mask":0,"source_sequence":0,"computation_us":0}]]}
 ```
 
 每条记录字段为：
@@ -196,7 +203,7 @@ HTTP API 使用 `Authorization: Bearer <口令>`。WebSocket 在握手前校验�
 ```text
 [cursor, sequence, cycle_start_us, [duty1,duty2,duty3,duty4],
  [R1,R2,R3,R4], valid_mask, faults, deadline_misses,
- telemetry_drops, control_stack_free_bytes]
+ telemetry_drops, control_stack_free_bytes, experiment]
 ```
 
 电阻单位为 Ω，无效值为 `null`，不回填旧数据；六位小数不代表实际精度。
@@ -220,7 +227,7 @@ HTTP 的 boot 参数变化会返回 `BOOT_CHANGED`；客户端必须按 boot_id 
 
 ## 控制与 OTA
 
-`SET 2 2 2 2` 只设置四路 0–95 整数：空闲时不启动加热或记录，运行时下一周期生效。
+`SET 2 2 2 2` 设置四路手动占空比（本版仅允许 0–2 整数）：空闲时不启动加热或记录，运行时下一周期生效。
 `START 2 2 2 2` 显式开始加热与记录；`START 0 0 0 0` 可用于零占空比测量记录。
 `PING` 仅为已有运行续约，不启动空闲任务；`STOP` 立即取消运行、关闭加热并停止历史写入。
 START 及运行中的 SET/PING 默认续约 5 秒，到期停热并停止记录。
@@ -369,3 +376,11 @@ Linux 同时识别 `cdc_ncm` 网卡与 `cdc_acm` 串口，宿主机及当前 Dev
 汇总为 `build/default/usb-hardware-validation.json`、`build/default/usb-unplug-validation.json`。
 构建、原生逻辑（含上限 2 的逐路拒绝测试）和网页交互测试通过。
 本次未重新注入启动失败固件验证回滚，也未进行示波器或硬件精度校准；旧版本回滚验证见上文。
+
+## 恒电阻模式
+
+`3.1.1-resistance` 增加四路目标电阻、基础 PID/PI、算法注册表、0.5% 输出和 schema 2
+实验记录。已完成主机仿真、网页/客户端回归及 35 秒实板闭环与租约测试。
+输出上限仍为 2；当前初步参数需针对实际负载进一步整定。完整接口、示例和结果见
+[恒电阻控制框架](docs/controller-framework.md)，示例配置为
+[controller-pid.json](examples/controller-pid.json)。

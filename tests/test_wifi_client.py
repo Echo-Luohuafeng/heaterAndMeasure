@@ -113,6 +113,23 @@ class ClientTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CLIENT.batch_rows({**batch, "next": 1}, 1)
 
+    def test_resistance_capture_renews_and_stops(self):
+        with tempfile.TemporaryDirectory() as directory:
+            CLIENT.capture(self.device,Path(directory)/"resistance.csv",.05,resistance=True)
+        self.assertEqual(Handler.commands[0],"RSTART")
+        self.assertIn("PING",Handler.commands)
+        self.assertEqual(Handler.commands[-1],"STOP")
+
+    def test_schema_two_experiment_columns(self):
+        extra = {"run_id": 7, "config_id": 3, "mode": 1, "algorithm": 1,
+                 "target": [110]*4, "requested": [1.3]*4,
+                 "limited_mask": 0, "blocked_mask": 0, "source_sequence": 5, "computation_us": 100}
+        frame = [*FRAME, extra];frame[3]=[1.5]*4
+        row = CLIENT.batch_rows({"schema":2,"boot_id":"boot","next":2,"frames":[frame]},1)[0]
+        self.assertEqual(len(row),len(CLIENT.CSV_FIELDS))
+        self.assertEqual(row[4],1.5)
+        self.assertEqual(row[17:21],[7,3,1,1])
+
     def test_reboot_creates_new_session_without_repeating_set(self):
         Handler.restart_after_read = True
         with tempfile.TemporaryDirectory() as directory:

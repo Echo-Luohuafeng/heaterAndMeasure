@@ -17,6 +17,7 @@ typedef enum {
     HEATER_COMMAND_STOP,
     HEATER_COMMAND_PING,
     HEATER_COMMAND_START,
+    HEATER_COMMAND_RESISTANCE_START,
 } heater_command_kind_t;
 
 // 保存解析后的控制命令；仅 SET/START 使用 duty，四路值均为 0～95。
@@ -33,8 +34,17 @@ enum {
     HEATER_FAULT_SAMPLE = 1U << 3,        // 原始码饱和、非正值或电阻越界。
     HEATER_FAULT_HOST_TIMEOUT = 1U << 4,  // 控制租约到期，等待显式 START/STOP。
     HEATER_FAULT_STOPPED = 1U << 5,       // 当前周期收到 STOP。
+    HEATER_FAULT_CONTROLLER = 1U << 7, // 算法超时/无效输出，取消运行。
     HEATER_FAULT_PWM = 1U << 6,           // PWM 操作失败，加热锁定至重启。
 };
+
+// schema 2 实验字段；pwm_ticks 为实际锁存计数，每计数 0.5 个百分点。
+typedef struct {
+    uint32_t run_id, config_id, source_sequence, computation_us;
+    uint8_t mode, algorithm, limited_mask, blocked_mask;
+    uint8_t pwm_ticks[4];
+    float target[4], requested[4];
+} heater_experiment_t;
 
 // 保存一个完整周期的测量快照，按值跨任务传递；时间单位为 µs、电阻单位为 Ω。
 // valid_mask 位 0～3 标识四通道，无效电阻为 NAN；duty 为周期起点生效值。
@@ -49,6 +59,7 @@ typedef struct {
     uint32_t deadline_misses;
     uint32_t telemetry_drops;
     uint32_t control_stack_free_bytes;
+    heater_experiment_t experiment;
 } heater_telemetry_t;
 
 // 区分数据帧与兼容文本回复；当前历史缓存只消费 DATA。

@@ -7,6 +7,7 @@ import sys
 
 root = Path(__file__).resolve().parents[1]
 subprocess.run([sys.executable, str(root / "tests/test_wifi_client.py")], check=True)
+subprocess.run([sys.executable, str(root / "tests/test_control_metrics.py")], check=True)
 node = shutil.which("node")
 if not node:
     candidates = sorted(Path("/vscode/vscode-server/bin/linux-x64").glob("*/node"))
