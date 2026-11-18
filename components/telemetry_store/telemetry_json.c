@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 
+// 先将四路电阻分别编码为数值或 null，再按固定数组字段顺序拼接一条记录。
+// 同时检查有效位和 isfinite，避免输出 JSON 不支持的 NAN/无穷大。
 int telemetry_record_json(const telemetry_record_t *record, char *output, size_t capacity)
 {
     const heater_telemetry_t *f = &record->frame;
@@ -26,6 +28,7 @@ int telemetry_record_json(const telemetry_record_t *record, char *output, size_t
     return length < 0 || (size_t)length >= capacity ? -1 : length;
 }
 
+// 逐位解析十进制并在乘十前检查 uint64_t 溢出，只在完整成功后写回输出。
 bool telemetry_parse_cursor(const char *text, uint64_t *value)
 {
     if (!text || !*text) return false;
@@ -40,6 +43,7 @@ bool telemetry_parse_cursor(const char *text, uint64_t *value)
     return true;
 }
 
+// 将 `c` 对应的十六进制数字转换为 0～15，其他字符返回 -1。
 static int hex_digit(char c)
 {
     if (c >= '0' && c <= '9') return c - '0';
@@ -48,6 +52,8 @@ static int hex_digit(char c)
     return -1;
 }
 
+// 按 & 和 = 精确匹配字段，逐字节解码值并拒绝重复字段、控制字符及截断。
+// 空值允许成功返回；容量检查始终为结尾 NUL 预留一字节。
 bool telemetry_form_value(const char *body, const char *key, char *value, size_t capacity)
 {
     if (!capacity) return false;
@@ -58,7 +64,7 @@ bool telemetry_form_value(const char *body, const char *key, char *value, size_t
         if (!end) end = part + strlen(part);
         const char *equal = memchr(part, '=', (size_t)(end - part));
         if (equal && (size_t)(equal - part) == key_size && !memcmp(part, key, key_size)) {
-            if (found) return false; // reject ambiguous duplicate fields
+            if (found) return false; // 拒绝有歧义的重复字段
             found = true;
             size_t used = 0;
             for (const char *p = equal + 1; p < end; ++p) {

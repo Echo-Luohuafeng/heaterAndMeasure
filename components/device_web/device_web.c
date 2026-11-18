@@ -39,11 +39,13 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool s_push_pending;
 static bool s_verified;
 static esp_err_t s_control_init_result;
+// 保存网页状态接口可读的 OTA 进度与错误，所有运行期访问由 s_lock 保护。
 static struct { bool active; size_t total, received; esp_err_t error; } s_ota;
 
 extern const char page_start[] asm("_binary_index_html_start");
 extern const char page_end[] asm("_binary_index_html_end");
 
+// 在网页状态锁内读取启动版本是否已确认，供控制及维护操作检查。
 static bool verified(void)
 {
     portENTER_CRITICAL(&s_lock);
@@ -52,6 +54,8 @@ static bool verified(void)
     return result;
 }
 
+// 向非空的 `req` 发送禁用缓存的 JSON 响应，status/body 均须为非空字符串。
+// 返回 HTTP 服务的发送结果，响应内容由调用方提供。
 static esp_err_t respond(httpd_req_t *req, const char *status, const char *body)
 {
     httpd_resp_set_status(req, status);
@@ -60,6 +64,8 @@ static esp_err_t respond(httpd_req_t *req, const char *status, const char *body)
     return httpd_resp_sendstr(req, body);
 }
 
+// 校验请求的 Bearer 口令，成功返回 true，否则先回复 401 再返回 false。
+// `req` 须为有效 HTTP 请求，失败后处理器无需再次发送响应。
 static bool authorized(httpd_req_t *req)
 {
     char header[48];
@@ -69,12 +75,16 @@ static bool authorized(httpd_req_t *req)
     return false;
 }
 
+// 将 URL 查询串写入非空的 `output`，没有查询串时写入空字符串。
+// `req` 须有效且 `size` 非零；查询读取失败或缓冲不足时返回 false。
 static bool query(httpd_req_t *req, char *output, size_t size)
 {
     if (httpd_req_get_url_query_len(req) == 0) { output[0] = '\0'; return true; }
     return httpd_req_get_url_query_str(req, output, size) == ESP_OK;
 }
 
+// 从非空的查询字符串 `parameters` 解析 from，缺省时将非空的输出 `from` 设为零。
+// 字段非法时返回 false，调用方应拒绝该请求。
 static bool cursor_from_query(const char *parameters, uint64_t *from)
 {
     char text[32];
@@ -83,6 +93,9 @@ static bool cursor_from_query(const char *parameters, uint64_t *from)
     return telemetry_form_value(parameters, "from", text, sizeof(text)) && telemetry_parse_cursor(text, from);
 }
 
+// 从 `from` 读取至多 `limit` 条历史并构造含启动 ID、丢失数及续传游标的 JSON。
+// `length` 须非空，`batch_next` 可为 NULL；结果优先使用 PSRAM，由调用方 free()。
+// 分配或编码失败返回 NULL；缓存读取只在复制期间持锁，序列化在锁外完成。
 static char *batch_json(uint64_t from, size_t limit, size_t *length, uint64_t *batch_next)
 {
     telemetry_record_t *records = malloc(limit * sizeof(*records));
@@ -110,6 +123,8 @@ static char *batch_json(uint64_t from, size_t limit, size_t *length, uint64_t *b
     return output;
 }
 
+// 向有效的 `req` 返回随固件嵌入的 UTF-8 网页，不要求 API 口令。
+// 长度排除嵌入资源的结尾 NUL，返回发送结果。
 static esp_err_t index_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
@@ -118,6 +133,8 @@ static esp_err_t index_handler(httpd_req_t *req)
     return httpd_resp_send(req, page_start, page_end - page_start - 1);
 }
 
+// 鉴权后汇总运行、网络、历史、OTA、内存/栈与时序状态，返回 JSON。
+// `req` 须有效；latest 取历史记录，启动自检使用独立的控制安全快照。
 static esp_err_t status_handler(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
@@ -159,6 +176,8 @@ static esp_err_t status_handler(httpd_req_t *req)
     return respond(req, "200 OK", output);
 }
 
+// 鉴权并校验 from/limit/boot，返回最多 250 条历史；启动 ID 不符时回复冲突。
+// `req` 须有效；批次缓冲在发送后释放，分配失败回复服务不可用。
 static esp_err_t data_handler(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
@@ -183,18 +202,22 @@ static esp_err_t data_handler(httpd_req_t *req)
     return result;
 }
 
+// 阻塞读取有效请求 `req` 的恰好 `size` 字节到非空的 `buffer`。
+// 任一次接收超时或连接关闭即返回 ESP_ERR_TIMEOUT，成功返回 ESP_OK。
 static esp_err_t receive_exact(httpd_req_t *req, void *buffer, size_t size)
 {
     size_t received = 0;
     while (received < size) {
         const int count = httpd_req_recv(req, (char *)buffer + received, size - received);
-        // One socket timeout aborts the transfer; an idle uploader cannot hold maintenance forever.
+        // 任一次 socket 超时即终止接收，避免空闲上传者长期占用维护流程。
         if (count <= 0) return ESP_ERR_TIMEOUT;
         received += (size_t)count;
     }
     return ESP_OK;
 }
 
+// 鉴权并解析控制命令；STOP 立即执行并等待缓存屏障，其余操作需完成启动自检。
+// `req` 须有效；START 可恢复维护后的控制任务，回复新运行 ID 和历史起始游标。
 static esp_err_t command_handler(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
@@ -231,6 +254,8 @@ static esp_err_t command_handler(httpd_req_t *req)
     return respond(req, "200 OK", command.kind == HEATER_COMMAND_SET ? "{\"ack\":\"SET\"}" : "{\"ack\":\"PING\"}");
 }
 
+// 鉴权并取得维护操作门闩，确认控制暂停后回复有效请求 `req` 并延时重启。
+// 暂停失败释放门闩并回复冲突，确保无法确认关断时不进入重启流程。
 static esp_err_t reboot_handler(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
@@ -247,8 +272,12 @@ static esp_err_t reboot_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+// 保存单个 WebSocket 查看者的后续游标，仅在 HTTP 服务上下文访问。
+// 会话由 HTTP 服务释放，重连后的持久游标由客户端重新提交。
 typedef struct { uint64_t next; } ws_session_t;
 
+// 在升级握手前校验有效请求 `req` 的查询口令，并限制最多两个 WebSocket 查看者。
+// 失败时回复 HTTP 错误并返回 ESP_FAIL，成功返回 ESP_OK。
 static esp_err_t ws_auth(httpd_req_t *req)
 {
     char parameters[160], token[33];
@@ -270,10 +299,11 @@ static esp_err_t ws_auth(httpd_req_t *req)
     return ESP_OK;
 }
 
+// 在握手完成回调中为有效请求 `req` 分配独立游标，并设置 200 ms 发送超时。
+// 会话由 HTTP 服务保存并用 free() 释放；启动 ID 改变时重置游标。
 static esp_err_t ws_connected(httpd_req_t *req)
 {
-    // IDF 6.1 does not call the URI handler for an upgrade handshake.
-    // Initialize the per-client cursor in its explicit completion callback.
+    // IDF 6.1 升级握手不调用 URI 处理器，因此在专用完成回调初始化独立游标。
     ws_session_t *session = calloc(1, sizeof(*session));
     if (!session) return ESP_ERR_NO_MEM;
     char parameters[160], boot[32];
@@ -283,23 +313,27 @@ static esp_err_t ws_connected(httpd_req_t *req)
     if (telemetry_form_value(parameters, "boot", boot, sizeof(boot)) && strcmp(boot, s_boot_id)) session->next = 0;
     req->sess_ctx = session;
     req->free_ctx = free;
-    // Bound the time a stalled viewer can delay other HTTP requests.
+    // 限制慢查看者阻塞其他 HTTP 请求的时间。
     const struct timeval timeout = {.tv_usec = 200000};
     setsockopt(httpd_req_to_sockfd(req), SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
     return ESP_OK;
 }
 
+// 接收有效请求 `req` 上长度不超过 64 字节的 WebSocket 帧，不提交控制命令。
+// 返回帧读取结果，控制命令经鉴权 HTTP 接口处理。
 static esp_err_t ws_handler(httpd_req_t *req)
 {
     httpd_ws_frame_t frame = {0};
     if (httpd_ws_recv_frame(req, &frame, 0) != ESP_OK) return ESP_FAIL;
-    // Commands use the authenticated HTTP API, keeping control separate from data streaming.
+    // 控制命令通过鉴权 HTTP API 提交，此处仅接收查看连接的短帧。
     if (frame.len > 64) return ESP_FAIL;
     uint8_t input[65];
     frame.payload = input;
     return httpd_ws_recv_frame(req, &frame, frame.len);
 }
 
+// 在 HTTP 服务上下文逐个发送历史批次，仅在发送成功后推进各会话游标。
+// 发送失败关闭会话，结束后清除待推送标记；`arg` 未使用。
 static void push_work(void *arg)
 {
     (void)arg;
@@ -318,8 +352,8 @@ static void push_work(void *arg)
             const esp_err_t sent = httpd_ws_send_frame_async(s_server, clients[i], &frame);
             free(payload);
             if (sent != ESP_OK) httpd_sess_trigger_close(s_server, clients[i]);
-            // The client's durable cursor is supplied explicitly after reconnect.
-            // Do not infer that delivery to a socket means persistence on the host.
+            // 重连时由客户端显式提供已持久化的游标。
+            // socket 发送成功只表示传输已接受，不能证明上位机已经落盘。
             else session->next = batch_next;
         }
     }
@@ -328,6 +362,8 @@ static void push_work(void *arg)
     portEXIT_CRITICAL(&s_lock);
 }
 
+// 按固定一秒周期向 HTTP 服务排入推送工作，待处理标记防止网络拥塞时重复积压。
+// `arg` 未使用；web_push 位于 Core 0，优先级 3，栈为 4096 字节。
 static void push_task(void *arg)
 {
     (void)arg;
@@ -344,11 +380,15 @@ static void push_task(void *arg)
     }
 }
 
+// 将非空的 HTTP 请求 `context` 适配为 OTA 读取回调，向 buffer 接收最多 size 字节。
+// 返回实际字节数或 HTTP 接收错误，缓冲区由 OTA 模块提供。
 static int ota_read(void *context, void *buffer, size_t size)
 {
     return httpd_req_recv(context, buffer, size);
 }
 
+// 在网页状态锁内更新 OTA 累计写入字节数 `received`，供状态接口显示进度。
+// `context` 未使用，允许为 NULL。
 static void ota_progress(void *context, size_t received)
 {
     (void)context;
@@ -357,6 +397,9 @@ static void ota_progress(void *context, size_t received)
     portEXIT_CRITICAL(&s_lock);
 }
 
+// 接管非空的异步 HTTP 请求 `arg`，执行暂停、镜像写入与响应，然后完成异步请求。
+// 成功延时重启；失败释放跨任务操作门闩并删除自身。
+// ota_writer 位于 Core 0，优先级 5，栈为 6144 字节，缓冲使用内部 RAM。
 static void ota_worker(void *arg)
 {
     httpd_req_t *req = arg;
@@ -375,6 +418,8 @@ static void ota_worker(void *arg)
     vTaskDelete(NULL);
 }
 
+// 鉴权并校验镜像大小及启动确认状态，将有效请求 `req` 转交专用 OTA 任务。
+// 异步请求避免上传占用 HTTP 主循环；创建失败时释放请求与操作门闩。
 static esp_err_t ota_handler(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
@@ -399,6 +444,8 @@ static esp_err_t ota_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+// 鉴权后解析有效请求 `req` 的 SSID/密码，确认控制暂停再写入 NVS，成功后重启。
+// 配网与 OTA 共用操作门闩；失败释放门闩并回复错误，已暂停输出保持禁止。
 static esp_err_t wifi_handler(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
@@ -423,6 +470,9 @@ static esp_err_t wifi_handler(httpd_req_t *req)
     return respond(req, "400 Bad Request", "{\"error\":\"WIFI_SAVE_FAILED\"}");
 }
 
+// 在约十秒内检查十次连续健康的不同采样快照，再确认版本或触发回滚。
+// 不以路由器联网作为健康条件；`arg` 未使用，结束后删除自身。
+// boot_verify 位于 Core 0，优先级 5，栈为 4096 字节。
 static void verify_task(void *arg)
 {
     (void)arg;
@@ -436,8 +486,8 @@ static void verify_task(void *arg)
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
-    // Router availability is independent of firmware health. Driver/server init
-    // already succeeded. Use local ADC/control health to validate a new image.
+    // 网络驱动及服务初始化已成功，路由器在线与否不作为固件健康判据。
+    // 使用本地 ADC/控制采样快照完成新版本确认。
     if (xSemaphoreTake(s_operation, pdMS_TO_TICKS(2000)) != pdTRUE) abort();
     const esp_err_t result = ota_update_confirm(good >= 10, s_control_init_result == ESP_OK);
     portENTER_CRITICAL(&s_lock); s_verified = result == ESP_OK; portEXIT_CRITICAL(&s_lock);
@@ -448,13 +498,14 @@ static void verify_task(void *arg)
     vTaskDelete(NULL);
 }
 
+// 生成本次启动 ID，创建跨任务操作门闩，注册八个路由并启动推送及版本确认任务。
+// HTTP 服务位于 Core 0，优先级 4，栈为 10240 字节，与 Core 1 采样控制隔离。
 esp_err_t device_web_start(esp_err_t control_init_result)
 {
     s_control_init_result = control_init_result;
     snprintf(s_boot_id, sizeof(s_boot_id), "%08" PRIx32 "%08" PRIx32, esp_random(), esp_random());
-    // The HTTP handler acquires this gate and hands the operation to the OTA
-    // task. A mutex cannot be released by a different task; use an unowned
-    // binary semaphore so failure cleanup cannot assert and reboot the device.
+    // HTTP 处理器取得门闩后由 OTA 任务接管并释放，互斥锁不允许跨任务释放。
+    // 使用无任务所有权的二值信号量，避免失败清理时断言并导致设备重启。
     s_operation = xSemaphoreCreateBinary();
     if (!s_operation) return ESP_ERR_NO_MEM;
     xSemaphoreGive(s_operation);

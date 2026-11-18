@@ -29,12 +29,15 @@ static char s_ap_ssid[32];
 static bool s_configured;
 static wifi_config_t s_ap_config;
 
+// 提交 STOP，网络链路断开后取消当前运行，重连不自动恢复加热。
 static void stop_heat(void)
 {
     const heater_command_t stop = {.kind = HEATER_COMMAND_STOP};
     heater_control_submit(&stop);
 }
 
+// 处理联网与断链事件，更新事件位并唤醒重连任务；STA/AP 客户端断开均停热。
+// `base`、`id` 由事件循环提供；GOT_IP 的 `data` 须为对应 IP 事件，`arg` 未使用。
 static void network_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
@@ -49,11 +52,12 @@ static void network_event(void *arg, esp_event_base_t base, int32_t id, void *da
         stop_heat();
         if (s_retry_task) xTaskNotifyGive(s_retry_task);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
-        // A browser connection is not an independent guarantee of control ownership.
+        // 热点客户端离开即撤销加热，避免控制页面离线后输出继续运行。
         stop_heat();
     }
 }
 
+// 校验暂停状态及凭据，将 SSID/密码作为单个 NVS 块提交，避免断电时半更新。
 esp_err_t network_manager_save(const char *ssid, const char *password)
 {
     if (!heater_control_is_paused()) return ESP_ERR_INVALID_STATE;
@@ -63,7 +67,7 @@ esp_err_t network_manager_save(const char *ssid, const char *password)
     if (password_size && password_size < 8) return ESP_ERR_INVALID_ARG;
     if (password_size == 64 && strspn(password, "0123456789abcdefABCDEF") != 64)
         return ESP_ERR_INVALID_ARG;
-    // One NVS blob avoids a partially replaced SSID/password pair after power loss.
+    // SSID 与密码一起写入一个 NVS 块，避免断电后仅更新其中一项。
     struct { char ssid[33]; char password[65]; } settings = {0};
     strcpy(settings.ssid, ssid);
     strcpy(settings.password, password);
@@ -76,6 +80,7 @@ esp_err_t network_manager_save(const char *ssid, const char *password)
     return result;
 }
 
+// 校验口令长度后累计全部字节差异，避免因首个不匹配位置提前结束比较。
 bool network_manager_authorized(const char *token)
 {
     if (!token || strlen(token) != 32) return false;
@@ -84,9 +89,11 @@ bool network_manager_authorized(const char *token)
     return difference == 0;
 }
 
+// 读取或生成持久口令及路由器配置，准备恢复热点并注册网络事件处理。
+// 首次口令生成期间启用芯片熵源；NVS 错误直接返回，保留现有凭据和校准数据。
 esp_err_t network_manager_init(void)
 {
-    // Do not silently erase NVS: it may contain calibration or credentials.
+    // NVS 可能包含校准值和凭据，初始化失败时保留内容并返回错误。
     esp_err_t result = nvs_flash_init();
     if (result != ESP_OK) return result;
     nvs_handle_t handle;
@@ -96,7 +103,7 @@ esp_err_t network_manager_init(void)
     result = nvs_get_str(handle, "token", s_token, &size);
     if (result == ESP_ERR_NVS_NOT_FOUND) {
         uint8_t random[16];
-        // RF is not started yet. Enable the SoC entropy source for provisioning.
+        // 射频尚未启动，生成首次配网口令前临时启用芯片熵源。
         bootloader_random_enable();
         esp_fill_random(random, sizeof(random));
         bootloader_random_disable();
@@ -150,6 +157,8 @@ esp_err_t network_manager_init(void)
     return ESP_OK;
 }
 
+// 按 1/2/4/8/16/30 秒退避重连，连续失败后开放恢复热点，联网后关闭热点。
+// `arg` 未使用；wifi_reconnect 位于 Core 0，优先级 4，栈为 4096 字节。
 static void retry_task(void *arg)
 {
     (void)arg;
@@ -174,13 +183,14 @@ static void retry_task(void *arg)
         const esp_err_t result = esp_wifi_connect();
         if (result != ESP_OK) ESP_LOGW(TAG, "Wi-Fi connect: %s", esp_err_to_name(result));
         const unsigned seconds = failures < 5 ? (1U << failures) : 30;
-        // Disconnect events wake us, but reconnect attempts remain rate limited.
+        // 断链通知可唤醒任务，但重连尝试仍受退避延时限制。
         vTaskDelay(pdMS_TO_TICKS(seconds * 1000));
         ulTaskNotifyTake(pdTRUE, 0);
         if (failures < 5) ++failures;
     }
 }
 
+// 启动无线驱动，应用配置的发射功率并关闭省电，已有 STA 配置时创建重连任务。
 esp_err_t network_manager_start(void)
 {
     esp_err_t result = esp_wifi_start();
@@ -192,6 +202,7 @@ esp_err_t network_manager_start(void)
     return ESP_OK;
 }
 
+// 先清零状态，再按事件位读取 STA 地址/RSSI；离线且热点启用时报告恢复地址。
 void network_manager_status(network_status_t *status)
 {
     *status = (network_status_t){0};

@@ -13,6 +13,8 @@
 
 #define OTA_BUFFER_BYTES 4096
 
+// 重复调用 `read`，将恰好 `size` 字节填入非空的 `buffer`。
+// 回调提前结束、报错或返回超量字节均视为 ESP_ERR_TIMEOUT；context 原样传递。
 static esp_err_t read_exact(ota_read_fn read, void *context, void *buffer, size_t size)
 {
     size_t done = 0;
@@ -24,6 +26,8 @@ static esp_err_t read_exact(ota_read_fn read, void *context, void *buffer, size_
     return ESP_OK;
 }
 
+// 确认暂停后用内部 RAM 缓冲接收镜像，先验证芯片/工程标记再顺序写入备用分区。
+// 将启动自检策略写入 NVS，最终由 IDF 校验镜像；失败清理句柄且保持停热。
 esp_err_t ota_update_receive(size_t total, ota_read_fn read, ota_progress_fn progress,
                              void *context, bool require_sampling)
 {
@@ -47,9 +51,9 @@ esp_err_t ota_update_receive(size_t total, ota_read_fn read, ota_progress_fn pro
     }
     esp_ota_handle_t handle = 0;
     if (result == ESP_OK) {
-        // Updates from a healthy sampler must retain sampling health. A device
-        // already in hardware recovery may update its network/recovery firmware
-        // before ADC power/wiring is restored. NVS makes this survive power loss.
+        // 从健康采样版本升级时，新版本也必须通过采样自检。
+        // 已处于硬件恢复模式时允许先升级网络恢复固件，稍后再修复 ADC 接线/供电。
+        // 将自检要求写入 NVS，保证升级期间断电后仍保留该策略。
         nvs_handle_t settings;
         result = nvs_open("heater_boot", NVS_READWRITE, &settings);
         if (result == ESP_OK) {
@@ -74,7 +78,7 @@ esp_err_t ota_update_receive(size_t total, ota_read_fn read, ota_progress_fn pro
     }
     if (result == ESP_OK) {
         result = esp_ota_end(handle);
-        handle = 0; // end releases the handle even when verification fails
+        handle = 0; // end 即使校验失败也会释放句柄
     }
     if (result == ESP_OK) result = esp_ota_set_boot_partition(partition);
     if (handle) esp_ota_abort(handle);
@@ -82,6 +86,8 @@ esp_err_t ota_update_receive(size_t total, ota_read_fn read, ota_progress_fn pro
     return result;
 }
 
+// 检查运行分区状态，仅对首次基线或待验证镜像执行暂停后的元数据写入。
+// 待验证版本依据 NVS 自检策略确认或回滚；允许恢复模式升级时可只保留网络恢复。
 esp_err_t ota_update_confirm(bool healthy, bool controller_ready)
 {
     const esp_partition_t *running = esp_ota_get_running_partition();
@@ -107,8 +113,8 @@ esp_err_t ota_update_confirm(bool healthy, bool controller_ready)
     }
     if (pending && !healthy && require_sampling) {
         result = esp_ota_mark_app_invalid_rollback_and_reboot();
-        // Successful rollback reboots. A returned call never justifies marking
-        // the failing application valid, even if a mock/port returns ESP_OK.
+        // 回滚成功会重启；只要调用返回，就不能将自检失败的应用标为有效。
+        // 即使测试替身或移植实现返回 ESP_OK，也按失败处理。
         return result == ESP_OK ? ESP_FAIL : result;
     }
     if (first_boot) result = esp_ota_set_boot_partition(running);

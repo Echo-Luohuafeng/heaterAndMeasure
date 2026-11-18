@@ -17,22 +17,26 @@ static mcpwm_cmpr_handle_t s_comparator[HEATER_CHANNEL_COUNT];
 static mcpwm_gen_handle_t s_generator[HEATER_CHANNEL_COUNT];
 static mcpwm_sync_handle_t s_sync;
 
+// 直接拉低两个请求 GPIO，供启动失败、停热和中断异常路径快速关断。
 void IRAM_ATTR heater_board_requests_off(void)
 {
     gpio_set_level(HEATER_HEAT_REQ_GPIO, 0);
     gpio_set_level(HEATER_MEAS_REQ_GPIO, 0);
 }
 
+// 直接设置 HEAT_REQ 电平，由阶段状态机安排互锁及预充电时序。
 void IRAM_ATTR heater_board_heat_request(bool enabled)
 {
     gpio_set_level(HEATER_HEAT_REQ_GPIO, enabled);
 }
 
+// 直接设置 MEAS_REQ 电平，由阶段中断保证测量截止时刻。
 void IRAM_ATTR heater_board_measure_request(bool enabled)
 {
     gpio_set_level(HEATER_MEAS_REQ_GPIO, enabled);
 }
 
+// 逐路设置持续强制低电平，即使一路失败也继续处理其余输出并汇总结果。
 bool IRAM_ATTR heater_board_pwm_low(void)
 {
     bool success = true;
@@ -44,9 +48,11 @@ bool IRAM_ATTR heater_board_pwm_low(void)
     return success;
 }
 
+// 装载四路比较值后触发软件同步，仅解除非零占空比通道的强制低电平。
+// 任一步失败立即返回 false，由控制层执行请求关断与故障锁定。
 bool IRAM_ATTR heater_board_pwm_apply(const uint8_t duty[HEATER_CHANNEL_COUNT])
 {
-    // Generators remain held low until all four compare registers are loaded.
+    // 装载完四路比较寄存器前保持 PWM 强制为低，避免通道先后生效。
     for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
         const uint32_t compare = duty[i] ? PWM_PERIOD_TICKS * duty[i] / 100U : 1U;
         if (mcpwm_comparator_set_compare_value(s_comparator[i], compare) != ESP_OK) {
@@ -64,6 +70,8 @@ bool IRAM_ATTR heater_board_pwm_apply(const uint8_t duty[HEATER_CHANNEL_COUNT])
     return true;
 }
 
+// 先建立安全低电平，再配置共用计时器、软件同步及两组四路 PWM 输出。
+// 比较值在计数归零或同步时更新，初始化结束后载波运行但输出仍强制为低。
 esp_err_t heater_board_init(void)
 {
     const uint64_t requests = (1ULL << HEATER_HEAT_REQ_GPIO) | (1ULL << HEATER_MEAS_REQ_GPIO);

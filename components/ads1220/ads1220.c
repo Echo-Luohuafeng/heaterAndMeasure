@@ -20,13 +20,16 @@
 #define ADC_WREG 0x40
 
 static const char *TAG = "ads1220";
-// The S3 SPI host has only three hardware CS slots. Use one SPI device and four
-// software CS GPIOs so all four converters share the same bus configuration.
+// S3 SPI 主机只有三个硬件片选槽，使用单个设备句柄与四路软件片选。
+// 四个 ADC 共用总线配置，所有事务须串行执行。
 static spi_device_handle_t s_device;
-// AIN0-AIN1, PGA gain 4; Turbo 660 SPS single-shot; REFP0/REFN0,
-// 1.5 mA IDAC; IDAC1 routed to AIN2, IDAC2 off; dedicated DRDY only.
+// AIN0−AIN1、PGA 增益 4、Turbo 660 SPS 单次转换、REFP0/REFN0 外部参考。
+// IDAC1 以 1.5 mA 激励 AIN2，IDAC2 关闭，使用独立 DRDY 引脚。
 static const uint8_t s_config[4] = {0x04, 0x90, 0x47, 0x60};
 
+// 用软件片选选中 `channel`，在独占 SPI 总线上执行短事务并恢复片选为高。
+// `tx` 须提供 length 字节，`rx` 可为 NULL；四字节以内使用事务内联缓冲。
+// 仅允许初始化流程或控制任务串行调用，返回参数检查或 SPI 传输结果。
 static esp_err_t transfer(size_t channel, const uint8_t *tx, uint8_t *rx, size_t length)
 {
     if (channel >= HEATER_CHANNEL_COUNT || s_device == NULL) {
@@ -42,8 +45,7 @@ static esp_err_t transfer(size_t channel, const uint8_t *tx, uint8_t *rx, size_t
         memcpy(transaction.tx_data, tx, length);
         if (rx) transaction.flags |= SPI_TRANS_USE_RXDATA;
     }
-    // Polling is confined to the control task. No DMA or long bus queue is needed
-    // for 1-6 byte transactions on this exclusively owned bus.
+    // 初始化后仅由控制任务轮询传输；独占总线上的短事务无需 DMA 或长队列。
     gpio_set_level(heater_adc_cs_gpio[channel], 0);
     const esp_err_t result = spi_device_polling_transmit(s_device, &transaction);
     gpio_set_level(heater_adc_cs_gpio[channel], 1);
@@ -52,6 +54,8 @@ static esp_err_t transfer(size_t channel, const uint8_t *tx, uint8_t *rx, size_t
     return result;
 }
 
+// 建立单个 SPI 设备及四路软件片选，复位后先配置 IDAC 电流，再接通路由。
+// 逐路读回寄存器验证配置，等待并丢弃初始转换，保持激励供后续周期使用。
 esp_err_t ads1220_init(void)
 {
     uint64_t cs_mask = 0;
@@ -79,8 +83,7 @@ esp_err_t ads1220_init(void)
     };
     ESP_RETURN_ON_ERROR(spi_bus_add_device(ADC_SPI_HOST, &device, &s_device),
                         TAG, "ADC SPI device failed");
-    // The bus is private to this one device handle throughout initialization
-    // and control. IDF's device-level bus lock avoids per-transfer arbitration.
+    // 初始化与控制均使用该设备句柄独占总线，长期持有设备级总线锁以减少逐次仲裁。
     ESP_RETURN_ON_ERROR(spi_device_acquire_bus(s_device, portMAX_DELAY), TAG, "SPI bus acquisition failed");
     for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
         const uint8_t reset = ADC_RESET;
@@ -88,7 +91,7 @@ esp_err_t ads1220_init(void)
     }
     vTaskDelay(pdMS_TO_TICKS(10));
     for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
-        // Program the IDAC current before connecting its output.
+        // 先配置 IDAC 电流，再连接输出，避免路由接通时激励尚未配置。
         const uint8_t initial[] = {ADC_WREG | 3, s_config[0], s_config[1], s_config[2], 0};
         ESP_RETURN_ON_ERROR(transfer(i, initial, NULL, sizeof(initial)), TAG, "ADC configuration failed");
         esp_rom_delay_us(200);
@@ -103,18 +106,20 @@ esp_err_t ads1220_init(void)
             return ESP_ERR_INVALID_RESPONSE;
         }
     }
-    // WREG starts an initial conversion; its result is discarded. Do not send
-    // POWERDOWN: the IDACs must remain biased while PhotoMOS isolates heating.
+    // WREG 触发的初始转换不参与采样；PhotoMOS 隔离加热期间 IDAC 仍需保持激励。
+    // 因此周期间不发送会关闭激励的 POWERDOWN。
     vTaskDelay(pdMS_TO_TICKS(10));
     return ESP_OK;
 }
 
+// 向选定通道发送 START/SYNC 命令，复用独占总线的短事务路径。
 esp_err_t ads1220_start(size_t channel)
 {
     const uint8_t start = ADC_START_SYNC;
     return transfer(channel, &start, NULL, 1);
 }
 
+// 发送 RDATA 并收取三字节大端补码，仅在传输成功时写回符号扩展结果。
 esp_err_t ads1220_read(size_t channel, int32_t *code)
 {
     if (code == NULL) {

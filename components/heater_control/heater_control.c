@@ -23,8 +23,8 @@
 #define CONTROL_TASK_STACK_BYTES 6144
 #define CONTROL_TASK_PRIORITY 20
 #define ADC_START_US 16800U
-// Wi-Fi/PSRAM cache variation pushes four START commands just beyond 200 us
-// even at 240 MHz. Complete by 17.10 ms; the 19.05 ms cutoff stays absolute.
+// Wi-Fi/PSRAM 缓存波动使四路 START 即使在 240 MHz 下也可能超过 200 µs。
+// 允许到 17.10 ms 完成，但测量关断仍固定为周期起点后的 19.05 ms。
 #define ADC_START_DEADLINE_US (ADC_START_US + 300U)
 #define MEASURE_OFF_US 19050U
 #define ADC_READ_GUARD_US 100U
@@ -38,6 +38,7 @@
 #define EVENT_ABORT (1U << 4)
 #define EVENT_PAUSE (1U << 5)
 
+// 定义一个 20 ms 周期的加热、互锁、转换、关断和预充电阶段；ABORT 表示异常帧。
 typedef enum {
     PHASE_START,
     PHASE_DISCHARGE,
@@ -51,7 +52,7 @@ typedef enum {
     PHASE_ABORT,
 } phase_t;
 
-// Writable DRAM: an IRAM ISR must not read a flash-resident const table.
+// 阶段表放入可写 DRAM，确保 IRAM ISR 在 Flash 缓存不可用时仍可读取。
 static DRAM_ATTR uint32_t s_phase_us[PHASE_COUNT] = {
     0, 15000, 15100, 15200, ADC_START_US, MEASURE_OFF_US, 19350, 19900,
 };
@@ -66,6 +67,8 @@ static const int32_t s_offset_mohm[HEATER_CHANNEL_COUNT] = {
 };
 static const char *TAG = "heater_control";
 
+// 保存控制任务与 ISR 共用的周期、许可、运行和维护状态，驻留内部 RAM。
+// 运行期共享状态用 lock 保护；暂停/恢复用 lifecycle 串行化，pause_ack 确认停止。
 typedef struct {
     portMUX_TYPE lock;
     gptimer_handle_t timer;
@@ -107,6 +110,7 @@ typedef struct {
 
 static control_t s_control = {.lock = portMUX_INITIALIZER_UNLOCKED};
 
+// 保存一次短临界区读取的控制快照，供任务在锁外处理，可能随下一中断过期。
 typedef struct {
     phase_t phase;
     uint32_t sequence;
@@ -116,6 +120,7 @@ typedef struct {
     uint32_t faults;
 } snapshot_t;
 
+// 在短临界区内复制阶段、周期及通道状态，供任务在锁外处理采样。
 static snapshot_t snapshot(void)
 {
     snapshot_t result;
@@ -130,6 +135,7 @@ static snapshot_t snapshot(void)
     return result;
 }
 
+// 仅当 `sequence` 仍对应当前周期时合并 `fault`，避免迟到操作污染下一帧。
 static void add_fault(uint32_t sequence, uint32_t fault)
 {
     portENTER_CRITICAL(&s_control.lock);
@@ -139,6 +145,8 @@ static void add_fault(uint32_t sequence, uint32_t fault)
     portEXIT_CRITICAL(&s_control.lock);
 }
 
+// 关闭请求并锁存 PWM 故障，禁止后续加热直到重启。
+// 调用方须已持有控制状态锁；函数位于 IRAM，供阶段中断调用。
 static void IRAM_ATTR pwm_failure(void)
 {
     heater_board_requests_off();
@@ -147,6 +155,10 @@ static void IRAM_ATTR pwm_failure(void)
     s_control.faults |= HEATER_FAULT_PWM;
 }
 
+// 在 GPTimer ISR 中推进绝对阶段时序，切换请求/PWM 并通知控制任务。
+// `timer`、`event` 由驱动提供且非空，`user_data` 未使用；返回是否需切换任务。
+// 迟到或重设闹钟失败时立即关断并丢弃该帧，恢复闹钟只安排到未来边界。
+// 仅执行有界的 IRAM 操作与 FromISR 通知，不在中断中进行 SPI、日志或换算。
 static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_event_data_t *event,
                                  void *user_data)
 {
@@ -162,7 +174,7 @@ static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_ev
     const phase_t phase = s_control.next_phase;
     s_control.phase = phase;
     if (event->count_value > event->alarm_value + CONFIG_HEATER_MAX_ISR_LATENCY_US) {
-        // Recover at a future absolute frame boundary. Never re-arm the past.
+        // 关断后只在未来的绝对周期边界恢复，避免将过去时间重新设为闹钟。
         heater_board_requests_off();
         heater_board_pwm_low();
         s_control.bootstrap_ready = false;
@@ -213,7 +225,7 @@ static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_ev
             break;
         }
         case PHASE_DISCHARGE:
-            // IN=0 grounds both force terminals without applying 48 V.
+            // IN=0 将两个电流端接地放电，不施加 48 V 加热功率。
             if (!heater_board_pwm_low()) {
                 pwm_failure();
             } else if (!s_control.pwm_failed) {
@@ -233,7 +245,7 @@ static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_ev
             notification = EVENT_CONVERT;
             break;
         case PHASE_MEASURE_OFF:
-            // This cutoff is independent of SPI, DRDY, the task and USB.
+            // 由定时器中断强制截止，不依赖 SPI、DRDY、控制任务或 USB 的完成情况。
             heater_board_measure_request(false);
             s_control.started_mask = 0;
             break;
@@ -241,7 +253,7 @@ static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_ev
             notification = EVENT_FRAME_DONE;
             break;
         case PHASE_PRECHARGE:
-            // PhotoMOS has been off for >800 us; held-low PWM keeps power zero.
+            // PhotoMOS 已关闭超过 800 µs；PWM 保持为低，仅给自举电容预充电。
             if (!s_control.pwm_failed && heater_board_pwm_low()) {
                 heater_board_heat_request(true);
                 s_control.bootstrap_ready = true;
@@ -273,7 +285,7 @@ static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_ev
         return woken == pdTRUE;
     }
     if (after + ALARM_REARM_GUARD_US >= s_control.alarm.alarm_count) {
-        // Driver work inside this callback can also overrun the next phase.
+        // 回调内部的驱动操作也可能耗尽下一阶段裕量，重新检查并只安排未来闹钟。
         portENTER_CRITICAL_ISR(&s_control.lock);
         heater_board_requests_off();
         s_control.bootstrap_ready = false;
@@ -306,6 +318,8 @@ static bool IRAM_ATTR phase_alarm(gptimer_handle_t timer, const gptimer_alarm_ev
     return woken == pdTRUE;
 }
 
+// 锁存转换窗口内的 DRDY 下降沿，仅接收已启动且满足最早就绪时间的通道。
+// `arg` 指向常驻内部 RAM 的通道索引；ISR 仅标记就绪并通知任务读取。
 static void IRAM_ATTR adc_ready(void *arg)
 {
     const size_t channel = *(uint8_t *)arg;
@@ -319,7 +333,7 @@ static void IRAM_ATTR adc_ready(void *arg)
     if (!s_control.maintenance && s_control.phase == PHASE_CONVERT && (s_control.started_mask & bit) &&
         now >= s_control.adc_start_us[channel] + ADC_EARLIEST_READY_US &&
         now < s_control.cycle_start_us + MEASURE_OFF_US) {
-        // Latch each edge: shared SPI clocks can clear other devices' DRDY.
+        // 分别锁存各通道下降沿，避免共享 SPI 时钟清除其他 ADC 的 DRDY 后丢失就绪状态。
         s_control.ready_mask |= bit;
         notify = true;
     }
@@ -333,6 +347,8 @@ static void IRAM_ATTR adc_ready(void *arg)
     }
 }
 
+// 在任务中依次启动四路 ADC，每条命令前后检查阶段、周期及 17.10 ms 截止。
+// 只记录 `sequence` 的故障；提前登记启动时间供 DRDY ISR 检查，失败撤销许可。
 static void start_conversion(uint32_t sequence)
 {
     for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
@@ -389,6 +405,9 @@ static void start_conversion(uint32_t sequence)
     }
 }
 
+// 读取 `frame` 当前周期已锁存且未读的通道，更新电阻和有效掩码。
+// 非空的 `read_mask` 按通道记录已尝试读取，避免 SPI 失败后重复读取。
+// SPI 前预留截止裕量，返回后再次检查截止；饱和或越界电阻不获得通道许可。
 static void read_ready(heater_telemetry_t *frame, uint8_t *read_mask)
 {
     const snapshot_t current = snapshot();
@@ -431,6 +450,9 @@ static void read_ready(heater_telemetry_t *frame, uint8_t *read_mask)
     }
 }
 
+// 汇总 `frame` 的故障，按 `aborted` 和 `read_mask` 判定有效性并更新下周期许可。
+// 无效电阻写为 NAN；内部安全快照始终更新，只有当前显式运行才非阻塞入队。
+// `frame` 须非空；跨周期结果丢弃，队列满仅累计丢帧，不等待缓存或网络。
 static void publish(heater_telemetry_t *frame, bool aborted, uint8_t read_mask)
 {
     portENTER_CRITICAL(&s_control.lock);
@@ -476,6 +498,9 @@ static void publish(heater_telemetry_t *frame, bool aborted, uint8_t read_mask)
     }
 }
 
+// 阻塞等待阶段、DRDY 和维护通知，在任务上下文执行 SPI、换算及发布。
+// 维护时停止 GPTimer、确认 PWM 为低后应答；每个周期最多发布一次。
+// `arg` 未使用；heater_cycle 位于 Core 1，优先级 20，栈为 6144 字节。
 static void control_task(void *arg)
 {
     (void)arg;
@@ -528,6 +553,8 @@ static void control_task(void *arg)
     }
 }
 
+// 创建暂停应答和生命周期锁，再依次初始化板级输出、ADC、GPTimer 与 DRDY ISR。
+// 中断归属调用所在核心；ADC 配置失败时关闭请求并保留板级恢复能力。
 esp_err_t heater_control_init(QueueHandle_t outbound)
 {
     if (outbound == NULL || s_control.outbound != NULL) {
@@ -572,12 +599,13 @@ esp_err_t heater_control_init(QueueHandle_t outbound)
     return ESP_OK;
 }
 
+// 创建与阶段中断同核的高优先级控制任务，安排首个绝对周期闹钟后启动计时。
 esp_err_t heater_control_start(void)
 {
     if (s_control.timer == NULL || s_control.task != NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    // Bootstrap and IRQ allocation also run on Core 1 (see app_main).
+    // 启动初始化及中断分配同样位于 Core 1，见 app_main。
     if (xTaskCreatePinnedToCore(control_task, "heater_cycle", CONTROL_TASK_STACK_BYTES, NULL,
                     CONTROL_TASK_PRIORITY, &s_control.task, 1) != pdPASS) {
         return ESP_ERR_NO_MEM;
@@ -592,6 +620,8 @@ esp_err_t heater_control_start(void)
     return gptimer_start(s_control.timer);
 }
 
+// 在临界区内更新设定、运行 ID 和租约；STOP 直接关断，SET/PING 不启动空闲运行。
+// 尚无控制任务时仅允许对已初始化板级输出执行 STOP。
 esp_err_t heater_control_submit(const heater_command_t *command)
 {
     if (command == NULL) {
@@ -643,6 +673,7 @@ esp_err_t heater_control_submit(const heater_command_t *command)
     return ESP_OK;
 }
 
+// 在控制锁内同时读取运行标志和 ID，使缓存任务能一致地筛选入队样本。
 heater_run_state_t heater_control_run_state(void)
 {
     portENTER_CRITICAL(&s_control.lock);
@@ -652,6 +683,7 @@ heater_run_state_t heater_control_run_state(void)
     return state;
 }
 
+// 在控制锁内复制最新内部采样；未发布过帧时保留调用方输出。
 bool heater_control_latest(heater_telemetry_t *frame)
 {
     portENTER_CRITICAL(&s_control.lock);
@@ -661,6 +693,7 @@ bool heater_control_latest(heater_telemetry_t *frame)
     return present;
 }
 
+// 在控制锁内读取任务已确认的暂停标志，区别于仅发起维护请求。
 bool heater_control_is_paused(void)
 {
     portENTER_CRITICAL(&s_control.lock);
@@ -669,6 +702,7 @@ bool heater_control_is_paused(void)
     return paused;
 }
 
+// 在控制锁内复制启动最大偏移及两类截止失败计数。
 heater_timing_stats_t heater_control_timing_stats(void)
 {
     portENTER_CRITICAL(&s_control.lock);
@@ -677,6 +711,7 @@ heater_timing_stats_t heater_control_timing_stats(void)
     return result;
 }
 
+// 在控制锁内读取维护请求标志，该标志可先于实际暂停确认生效。
 bool heater_control_is_maintenance(void)
 {
     portENTER_CRITICAL(&s_control.lock);
@@ -685,13 +720,15 @@ bool heater_control_is_maintenance(void)
     return paused;
 }
 
+// 用生命周期互斥锁串行化暂停/恢复，先关断并清空运行，再等待任务应答。
+// 无控制任务时直接核验板级关断；超时保持维护状态，禁止写 Flash。
 esp_err_t heater_control_pause(TickType_t timeout)
 {
     if (s_control.lifecycle == NULL) return ESP_ERR_INVALID_STATE;
     if (xSemaphoreTake(s_control.lifecycle, timeout) != pdTRUE) return ESP_ERR_TIMEOUT;
     if (s_control.task == NULL) {
-        // Initialization completed without starting a control task (e.g. ADC
-        // register verification failed). No SPI transfer or timer can be active.
+        // 初始化结束但未启动控制任务，例如 ADC 寄存器验证失败。
+        // 此时没有运行中的 SPI 事务或周期定时器，可直接核验板级关断。
         portENTER_CRITICAL(&s_control.lock);
         const bool ready = s_control.board_ready;
         if (ready) {
@@ -718,7 +755,7 @@ esp_err_t heater_control_pause(TickType_t timeout)
     portEXIT_CRITICAL(&s_control.lock);
     esp_err_t result = ESP_OK;
     if (!paused) {
-        xSemaphoreTake(s_control.pause_ack, 0); // discard a previous failed acknowledgement
+        xSemaphoreTake(s_control.pause_ack, 0); // 丢弃之前失败流程遗留的应答
         xTaskNotify(s_control.task, EVENT_PAUSE, eSetBits);
         if (xSemaphoreTake(s_control.pause_ack, timeout) != pdTRUE || !s_control.paused) {
             result = ESP_ERR_TIMEOUT;
@@ -728,6 +765,8 @@ esp_err_t heater_control_pause(TickType_t timeout)
     return result;
 }
 
+// 串行化恢复操作，将实际暂停时长补入 GPTimer 并安排未来的周期边界。
+// 启动失败重新锁定维护状态；成功后仍为空闲，需 START 创建新的显式运行。
 esp_err_t heater_control_resume(void)
 {
     if (s_control.lifecycle == NULL || s_control.task == NULL || s_control.timer == NULL)
