@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LAN telemetry capture and OTA, using only the Python standard library."""
+"""HTTP telemetry capture and OTA over USB CDC-NCM, using only the Python standard library."""
 
 import argparse
 import csv
@@ -126,7 +126,7 @@ def capture(device, csv_path, seconds, duties=None, history=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", required=True, help="e.g. http://192.168.1.50")
+    parser.add_argument("--url", required=True, help="e.g. http://192.168.7.1")
     parser.add_argument("--token-file", type=Path, help="otherwise read HEATER_TOKEN or prompt without echo")
     commands = parser.add_subparsers(dest="action", required=True)
     monitor = commands.add_parser("monitor")
@@ -142,8 +142,6 @@ def main(argv=None):
     commands.add_parser("reboot")
     ota = commands.add_parser("ota")
     ota.add_argument("firmware", type=Path, help="application .bin, not a merged flash image")
-    wifi = commands.add_parser("wifi")
-    wifi.add_argument("ssid")
     args = parser.parse_args(argv)
     if args.action in ("start", "set") and any(d < 0 or d > 95 for d in args.duty):
         parser.error("each duty must be 0–95")
@@ -168,10 +166,7 @@ def main(argv=None):
         if not (512 <= len(data) <= 4 * 1024 * 1024) or data[0] != 0xE9:
             raise ValueError("expected an ESP application .bin no larger than 4 MiB")
         print(device.request("/api/ota", data, "application/octet-stream", timeout=90))
-    else:
-        password = getpass.getpass("Wi-Fi password (empty for an open network): ")
-        body = urlencode({"ssid": args.ssid, "password": password}).encode("utf-8")
-        print(device.request("/api/wifi", body, "application/x-www-form-urlencoded", timeout=10))
+
 
 
 if __name__ == "__main__":

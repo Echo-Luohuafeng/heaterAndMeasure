@@ -9,8 +9,8 @@ const source = html.split('<script>')[1].split('</script>')[0];
 const elements = new Map(), listeners = {}, timers = [], requests = [], sockets = [], blobs = [];
 const TOKEN = '0123456789abcdef0123456789abcdef';
 const FRAME = [1, 7, 20000, [5, 0, 0, 0], [100, null, 120, 130], 13, 2, 0, 0, 2048];
-const status = {boot_id:'test', version:'2.1.0-wifi', verified:true, maintenance:false,running:false,recording:false,
- network:{ip:'192.168.4.1',rssi:-45}, store:{psram:true,oldest:1,next:2,capacity:65536,overwritten:0},
+const status = {boot_id:'test', version:'3.0.0-usb-ncm', verified:true, maintenance:false,running:false,recording:false,
+ network:{ip:'192.168.7.1',transport:'usb_ncm',connected:true}, store:{psram:true,oldest:1,next:2,capacity:65536,overwritten:0},
  ota:{active:false,error:0},free_internal_bytes:100000};
 class Element {
  constructor(){this.value='';this.children=[];this.clientWidth=900;this.files=[];this.textContent='';this.checked=false;}
@@ -21,7 +21,7 @@ class Element {
 const document = {hidden:false,getElementById(id){if(!elements.has(id)){const el=new Element();el.id=id;}return elements.get(id);},
  createElement:()=>new Element(),addEventListener(name,fn){listeners[name]=fn;}};
 const context = vm.createContext({document,window:{devicePixelRatio:1,addEventListener(name,fn){listeners[name]=fn;}},
- location:{protocol:'http:',host:'192.168.4.1'},sessionStorage:{getItem:()=>'',setItem(){}},
+ location:{protocol:'http:',host:'192.168.7.1'},sessionStorage:{getItem:()=>'',setItem(){}},
  URL:{createObjectURL(blob){blobs.push(blob);return 'blob:test';},revokeObjectURL(){}},Blob,URLSearchParams,
  confirm:()=>true,setTimeout:()=>1,clearTimeout(){},setInterval(fn){timers.push(fn);},
  WebSocket:class {constructor(url){this.url=url;sockets.push(this);}close(){}},
@@ -64,8 +64,18 @@ async function run(){
  await vm.runInContext('poll()',context);
  assert.equal(element('set').disabled,true);assert.equal(element('start').disabled,true);
  assert(!html.includes('id="resume"'));
+ assert(!html.includes('/api/wifi'));
+ assert.match(element('device').textContent,/USB 已连接/);
+ assert(!element('device').textContent.includes('RSSI'));
+ status.network.connected=false;await vm.runInContext('poll()',context);
+ assert.match(element('device').textContent,/USB 已断开/);
  assert.match(element('diagnostics').textContent,/采样初始化失败/);
  await element('reboot').onclick();assert.equal(requests.at(-1).url,'/api/reboot');
+ status.max_duty=2;status.control_ready=true;status.maintenance=false;await vm.runInContext('poll()',context);
+ assert.equal(element('duty0').max,2);
+ element('duty0').value='3';const beforeLimit=requests.length;await element('set').onclick();
+ assert.equal(requests.length,beforeLimit);assert.match(element('message').textContent,/0–2/);
+ element('duty0').value='2';await element('set').onclick();assert.equal(requests.at(-1).body,'SET 2 0 0 0');
  console.log('Dashboard explicit START, staged SET, opt-in heartbeat, hidden-tab heartbeat, STOP and CSV tests passed');
 }
 run().catch(error=>{console.error(error);process.exitCode=1;});

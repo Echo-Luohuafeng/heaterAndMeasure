@@ -155,18 +155,19 @@ static esp_err_t status_handler(httpd_req_t *req)
     portEXIT_CRITICAL(&s_lock);
     char output[1600];
     snprintf(output, sizeof(output),
-        "{\"boot_id\":\"%s\",\"version\":\"%s\",\"verified\":%s,\"lease_ms\":%d,"
+        "{\"boot_id\":\"%s\",\"version\":\"%s\",\"verified\":%s,\"lease_ms\":%d,\"max_duty\":%d,"
         "\"running\":%s,\"recording\":%s,\"run_id\":%u,"
-        "\"control_ready\":%s,\"control_init_error\":%d,\"maintenance\":%s,\"network\":{\"connected\":%s,\"ap\":%s,\"ip\":\"%s\",\"rssi\":%d,\"ap_ssid\":\"%s\"},"
+        "\"control_ready\":%s,\"control_init_error\":%d,\"maintenance\":%s,\"network\":{\"connected\":%s,\"transport\":\"usb_ncm\",\"ip\":\"%s\",\"rx_drops\":%u,\"tx_drops\":%u,\"usb_stack_free_bytes\":%u,\"network_stack_free_bytes\":%u},"
         "\"store\":{\"psram\":%s,\"capacity\":%u,\"oldest\":%" PRIu64 ",\"next\":%" PRIu64 ",\"overwritten\":%" PRIu64 "},"
         "\"ota\":{\"active\":%s,\"total\":%u,\"received\":%u,\"error\":%d},"
         "\"free_internal_bytes\":%u,\"min_internal_bytes\":%u,\"http_stack_free_bytes\":%u,"
         "\"timing\":{\"adc_start_max_offset_us\":%u,\"adc_start_misses\":%u,\"adc_read_misses\":%u},\"latest\":%s}",
-        s_boot_id, esp_app_get_description()->version, verified ? "true" : "false", CONFIG_HEATER_CONTROL_LEASE_MS,
+        s_boot_id, esp_app_get_description()->version, verified ? "true" : "false", CONFIG_HEATER_CONTROL_LEASE_MS, CONFIG_HEATER_OUTPUT_DUTY_LIMIT,
         run.running ? "true" : "false", run.running ? "true" : "false", (unsigned)run.id,
         s_control_init_result == ESP_OK ? "true" : "false", s_control_init_result,
         heater_control_is_maintenance() ? "true" : "false", network.connected ? "true" : "false",
-        network.ap_active ? "true" : "false", network.address, network.rssi, network.ap_ssid,
+        network.address, (unsigned)network.rx_drops, (unsigned)network.tx_drops,
+        (unsigned)network.usb_stack_free_bytes, (unsigned)network.network_stack_free_bytes,
         telemetry_store_uses_psram() ? "true" : "false", (unsigned)stats.capacity, stats.oldest, stats.next, stats.overwritten,
         active ? "true" : "false", (unsigned)total, (unsigned)received, error,
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
@@ -234,6 +235,10 @@ static esp_err_t command_handler(httpd_req_t *req)
         telemetry_store_sync_stop();
         return respond(req, "200 OK", "{\"ack\":\"STOP\"}");
     }
+    for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i)
+        if ((command.kind == HEATER_COMMAND_START || command.kind == HEATER_COMMAND_SET) &&
+            command.duty[i] > CONFIG_HEATER_OUTPUT_DUTY_LIMIT)
+            return respond(req, "400 Bad Request", "{\"error\":\"DUTY_LIMIT\"}");
     if (!verified()) return respond(req, "409 Conflict", "{\"error\":\"SELF_TEST_PENDING\"}");
     if (xSemaphoreTake(s_operation, 0) != pdTRUE)
         return respond(req, "409 Conflict", "{\"error\":\"BUSY\"}");
@@ -444,32 +449,6 @@ static esp_err_t ota_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-// 鉴权后解析有效请求 `req` 的 SSID/密码，确认控制暂停再写入 NVS，成功后重启。
-// 配网与 OTA 共用操作门闩；失败释放门闩并回复错误，已暂停输出保持禁止。
-static esp_err_t wifi_handler(httpd_req_t *req)
-{
-    if (!authorized(req)) return ESP_OK;
-    if (!verified() || xSemaphoreTake(s_operation, 0) != pdTRUE)
-        return respond(req, "409 Conflict", "{\"error\":\"BUSY\"}");
-    char body[400], ssid[33], password[65];
-    esp_err_t result = ESP_ERR_INVALID_ARG;
-    if (req->content_len && req->content_len < sizeof(body) &&
-        receive_exact(req, body, req->content_len) == ESP_OK) {
-        body[req->content_len] = '\0';
-        if (telemetry_form_value(body, "ssid", ssid, sizeof(ssid)) &&
-            telemetry_form_value(body, "password", password, sizeof(password))) {
-            result = heater_control_pause(pdMS_TO_TICKS(2000));
-            if (result == ESP_OK) result = network_manager_save(ssid, password);
-        }
-    }
-    if (result == ESP_OK) {
-        respond(req, "200 OK", "{\"ack\":\"WIFI_SAVED\",\"reboot\":true}");
-        vTaskDelay(pdMS_TO_TICKS(500)); esp_restart();
-    }
-    xSemaphoreGive(s_operation);
-    return respond(req, "400 Bad Request", "{\"error\":\"WIFI_SAVE_FAILED\"}");
-}
-
 // 在约十秒内检查十次连续健康的不同采样快照，再确认版本或触发回滚。
 // 不以路由器联网作为健康条件；`arg` 未使用，结束后删除自身。
 // boot_verify 位于 Core 0，优先级 5，栈为 4096 字节。
@@ -498,7 +477,7 @@ static void verify_task(void *arg)
     vTaskDelete(NULL);
 }
 
-// 生成本次启动 ID，创建跨任务操作门闩，注册八个路由并启动推送及版本确认任务。
+// 生成本次启动 ID，创建跨任务操作门闩，注册七个路由并启动推送及版本确认任务。
 // HTTP 服务位于 Core 0，优先级 4，栈为 10240 字节，与 Core 1 采样控制隔离。
 esp_err_t device_web_start(esp_err_t control_init_result)
 {
@@ -513,7 +492,7 @@ esp_err_t device_web_start(esp_err_t control_init_result)
     config.core_id = 0;
     config.task_priority = 4;
     config.stack_size = 10240;
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 7;
     config.max_open_sockets = 6;
     config.recv_wait_timeout = 2;
     config.send_wait_timeout = 1;
@@ -526,7 +505,6 @@ esp_err_t device_web_start(esp_err_t control_init_result)
         {.uri = "/api/data", .method = HTTP_GET, .handler = data_handler},
         {.uri = "/api/control", .method = HTTP_POST, .handler = command_handler},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_handler},
-        {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_handler},
         {.uri = "/api/ota", .method = HTTP_POST, .handler = ota_handler},
         {.uri = "/ws", .method = HTTP_GET, .handler = ws_handler, .is_websocket = true,
          .ws_pre_handshake_cb = ws_auth, .ws_post_handshake_cb = ws_connected},

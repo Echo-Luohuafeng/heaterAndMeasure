@@ -634,7 +634,7 @@ esp_err_t heater_control_submit(const heater_command_t *command)
     }
     if (command->kind == HEATER_COMMAND_SET || command->kind == HEATER_COMMAND_START) {
         for (size_t i = 0; i < HEATER_CHANNEL_COUNT; ++i) {
-            if (command->duty[i] > HEATER_MAX_DUTY) {
+            if (command->duty[i] > HEATER_MAX_DUTY || command->duty[i] > CONFIG_HEATER_OUTPUT_DUTY_LIMIT) {
                 return ESP_ERR_INVALID_ARG;
             }
         }

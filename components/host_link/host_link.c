@@ -1,7 +1,10 @@
 #include "host_link.h"
 
+#include <stdio.h>
 #include <string.h>
-#include "driver/usb_serial_jtag.h"
+#include "tinyusb_cdc_acm.h"
+#include "tinyusb_console.h"
+#include "network_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "heater_control.h"
@@ -9,12 +12,20 @@
 #include "telemetry_store.h"
 
 static bool s_started;
+static TaskHandle_t s_rescue_task;
 
-// 以最多 20 ms 等待发送非空的 USB 回复 `text`，保持救援通道发送时间有界。
+// 与日志共用 VFS 输出锁；TinyUSB CDC 输出不等待主机读取。
 static void reply(const char *text)
 {
-    // USB 仅用于有界等待的救援/调试回复，不消费采样队列。
-    usb_serial_jtag_write_bytes(text, strlen(text), pdMS_TO_TICKS(20));
+    fputs(text, stdout);
+}
+
+// 回调只通知任务，口令日志及命令处理都在 usb_rescue 中执行。
+static void line_state_changed(int itf, cdcacm_event_t *event)
+{
+    (void)itf;
+    if (event->line_state_changed_data.dtr && s_rescue_task)
+        xTaskNotifyGive(s_rescue_task);
 }
 
 // 阻塞接收 USB 字节，按回车/换行分帧；超长行丢弃到行尾，仅接受 STOP/PING。
@@ -28,15 +39,20 @@ static void receive_task(void *arg)
     bool discard = false;
     for (;;) {
         uint8_t input[64];
-        const int count = usb_serial_jtag_read_bytes(input, sizeof(input), pdMS_TO_TICKS(100));
-        for (int i = 0; i < count; ++i) {
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100))) {
+            reply("READY,USB_NCM,50HZ,USB_STOP_ONLY\n");
+            network_manager_log_connection();
+        }
+        size_t count = 0;
+        tinyusb_cdcacm_read(TINYUSB_CDC_ACM_0, input, sizeof(input), &count);
+        for (size_t i = 0; i < count; ++i) {
             const char c = (char)input[i];
             if (c == '\r' || c == '\n') {
                 heater_command_t command;
                 if (discard) reply("ERR,LINE_TOO_LONG\n");
                 else if (used) {
                     if (!heater_command_parse(line, used, &command)) reply("ERR,COMMAND\n");
-                    else if (command.kind == HEATER_COMMAND_SET || command.kind == HEATER_COMMAND_START) reply("ERR,USE_WIFI\n");
+                    else if (command.kind == HEATER_COMMAND_SET || command.kind == HEATER_COMMAND_START) reply("ERR,USE_HTTP\n");
                     else if (heater_control_submit(&command) != ESP_OK) reply("ERR,MAINTENANCE\n");
                     else {
                         if (command.kind == HEATER_COMMAND_STOP) telemetry_store_sync_stop();
@@ -52,16 +68,24 @@ static void receive_task(void *arg)
     }
 }
 
-// 安装带收发缓冲的 USB 驱动，创建救援任务并发送就绪标记，拒绝重复启动。
+// 网络模块先安装 TinyUSB；这里初始化同一复合设备的 ACM 日志/救援串口。
 esp_err_t host_link_start(void)
 {
     if (s_started) return ESP_ERR_INVALID_STATE;
-    usb_serial_jtag_driver_config_t config = {.tx_buffer_size = 1024, .rx_buffer_size = 512};
-    esp_err_t result = usb_serial_jtag_driver_install(&config);
+    tinyusb_config_cdcacm_t config = {
+        .cdc_port = TINYUSB_CDC_ACM_0,
+        .callback_line_state_changed = line_state_changed,
+    };
+    esp_err_t result = tinyusb_cdcacm_init(&config);
     if (result != ESP_OK) return result;
-    if (xTaskCreatePinnedToCore(receive_task, "usb_rescue", 4096, NULL, 4, NULL, 0) != pdPASS)
-        return ESP_ERR_NO_MEM;
+    result = tinyusb_console_init(TINYUSB_CDC_ACM_0);
+    if (result != ESP_OK) return result;
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    if (xTaskCreatePinnedToCore(receive_task, "usb_rescue", 4096, NULL, 4,
+                               &s_rescue_task, 0) != pdPASS) return ESP_ERR_NO_MEM;
     s_started = true;
-    reply("READY,WIFI,50HZ,USB_STOP_ONLY\n");
+    // 覆盖主机在任务创建前已经打开串口的情况。
+    xTaskNotifyGive(s_rescue_task);
     return ESP_OK;
 }

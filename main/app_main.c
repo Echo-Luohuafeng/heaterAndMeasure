@@ -1,5 +1,5 @@
 // ESP32-S3 四路 PT100 加热与四线电阻测量固件的启动入口。
-// 每 20 ms 先执行 15 ms 加热，再在剩余窗口切换并采样；Wi-Fi 提供控制、历史和 OTA。
+// 每 20 ms 先执行 15 ms 加热，再在剩余窗口切换并采样；USB 网络提供控制、历史和 OTA。
 // 默认空闲，显式 START 后加热及记录；通道许可、租约与 USB STOP 提供停热保护。
 
 #include <stdlib.h>
@@ -61,9 +61,10 @@ void app_main(void)
         abort();
     }
     require_success(telemetry_store_init(), "Sample storage initialization");
-    // 凭据/NVS 写入与首次射频校准均在采样启动前完成。
+    // 凭据/NVS 写入在采样启动前完成。
     require_success(network_manager_init(), "Network initialization");
-    require_success(network_manager_start(), "Wi-Fi start");
+    require_success(network_manager_start(), "USB network start");
+    require_success(host_link_start(), "USB rescue start");
     require_success(telemetry_store_start(s_bootstrap.samples), "Sample storage task start");
     if (xTaskCreatePinnedToCore(control_bootstrap, "control_init", 6144, NULL, 20, NULL, 1) != pdPASS)
         require_success(ESP_ERR_NO_MEM, "Control initialization task creation");
@@ -75,7 +76,6 @@ void app_main(void)
                  esp_err_to_name(s_bootstrap.result));
     }
     vSemaphoreDelete(s_bootstrap.done);
-    require_success(host_link_start(), "USB rescue start");
     require_success(device_web_start(s_bootstrap.result), "Web service start");
     // IDF 调度器已经运行，业务循环通过阻塞等待事件让出 CPU。
     // app_main 返回后，控制、网络与 USB 等任务继续执行。

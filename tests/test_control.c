@@ -189,6 +189,25 @@ static void reach_conversion(void)
 
 int main(void)
 {
+    if (CONFIG_HEATER_OUTPUT_DUTY_LIMIT == 2) {
+        reset();
+        const heater_command_t allowed = {.kind = HEATER_COMMAND_START, .duty = {2, 2, 2, 2}};
+        assert(heater_control_submit(&allowed) == ESP_OK);
+        for (size_t channel = 0; channel < 4; ++channel) {
+            heater_command_t above = allowed;
+            above.duty[channel] = 3;
+            assert(heater_control_submit(&above) == ESP_ERR_INVALID_ARG);
+            above.kind = HEATER_COMMAND_SET;
+            assert(heater_control_submit(&above) == ESP_ERR_INVALID_ARG);
+            assert(memcmp(s_control.desired, allowed.duty, 4) == 0);
+        }
+        const heater_command_t stopped = {.kind = HEATER_COMMAND_STOP};
+        assert(heater_control_submit(&stopped) == ESP_OK);
+        assert(!s_control.command_active && !heat_request);
+        puts("Duty limit 2 rejects START/SET above limit on every channel");
+        return 0;
+    }
+
     // Idle safety sampling must not enqueue any historical samples. SET stages
     // duties without enabling heat/recording, and PING cannot start an idle run.
     reset();

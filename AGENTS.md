@@ -3,10 +3,10 @@
 ## 环境与工程
 
 - 目标为 `esp32s3`；使用 VS Code ESP-IDF 扩展和 Linux Dev Container，固定 ESP-IDF v6.1.1（`/opt/esp/idf`）、用户 `vscode`。终端环境未加载时执行 `. /opt/esp/idf/export.sh`。
-- Flash 为 16 MB，日志及 STOP 救援命令使用内置 USB Serial/JTAG，正常通信使用 Wi-Fi HTTP/WebSocket。PSRAM 已实板确认 8 MB、Octal 80 MHz 并通过启动测试；使用 4 MiB 历史缓存。CPU 使用 240 MHz、性能优化编译，ADC SPI 为 2 MHz 且由一个设备句柄独占。
-- 已完成 Wi-Fi/OTA/启动失败回滚及四路最大占空比 2 的实板测试；后续变更仍需检查采样时序、无效帧、任务栈余量及输出关断。硬件精度校准和示波器验证另行进行。
+- Flash 为 16 MB，正常通信使用 USB-OTG CDC-NCM HTTP/WebSocket，日志及 STOP 救援命令使用同一复合设备的 CDC-ACM；运行时内置 USB Serial/JTAG 与 OTG 不能共用内部 PHY。PSRAM 已实板确认 8 MB、Octal 80 MHz 并通过启动测试；使用 4 MiB 历史缓存。CPU 使用 240 MHz、性能优化编译，ADC SPI 为 2 MHz 且由一个设备句柄独占。
+- 当前安全输出上限为 2（`CONFIG_HEATER_OUTPUT_DUTY_LIMIT`），不得未经用户明确授权提高。已完成 USB NCM/ACM、HTTP/WebSocket、OTA、额外供电下拔线及四路最大占空比 2 的实板测试；旧 Wi-Fi 版本已验证启动失败回滚；后续变更仍需检查采样时序、无效帧、任务栈余量及输出关断。硬件精度校准和示波器验证另行进行。
 - 上电默认空闲，SET 只更新设定，START 才开始加热与历史记录；STOP 或控制租约到期停止记录。后台安全样本用于通道许可和 OTA 自检，不写入历史缓存。
-- 分区布局见 `partitions.csv`，使用两个 4 MiB 应用分区及 `otadata`。首次迁移需 USB 完整烧录；日常 OTA 仅上传应用 `.bin`。OTA、NVS 配网保存及启动版本确认写 Flash 前，必须获得控制任务的暂停确认。
+- 分区布局见 `partitions.csv`，使用两个 4 MiB 应用分区及 `otadata`。首次迁移需 USB 完整烧录；日常 OTA 仅上传应用 `.bin`。OTA、运行时 NVS 保存及启动版本确认写 Flash 前，必须获得控制任务的暂停确认。
 - 入口为 `main/app_main.c`；业务模块放在 `components/<组件名>/`，组件内包含 `CMakeLists.txt` 和公共头文件目录 `include/`。
 - 根工程启用 `MINIMAL_BUILD`；通过 `idf_component_register` 声明源文件、头文件目录及依赖。实现依赖使用 `PRIV_REQUIRES`，公共头文件依赖使用 `REQUIRES`；使用 FreeRTOS 的组件显式声明 `freertos` 依赖。
 - 统一使用预设 `default`，`binaryDir` 保持相对路径 `build/default`。VS Code 的目标、构建目录、`sdkconfig` 路径须与预设一致，编译数据库为 `build/default/compile_commands.json`。
@@ -38,4 +38,4 @@ idf.py --preset default -p /dev/ttyACM0 flash monitor
 
 - 持久环境变更写入 `.devcontainer/Dockerfile` 或 `devcontainer.json`，随后重建容器；重建或迁移前检查宿主机绑定文件是否存在。
 - 设备组 GID 默认 18；迁移时核对宿主机 `dialout` GID，通过 `ESP_DEVICE_GID` 同时传给镜像构建和容器启动。
-- USB JTAG 使用 `board/esp32s3-builtin.cfg`；权限问题在宿主机配置 udev，将 VID:PID `303a:1001` 的 USB 和串口节点设为 `dialout` 组、权限 `0660`，重载后重新插拔。
+- USB NCM/ACM 使用 VID:PID `303a:4011`；ROM 下载模式仍为 `303a:1001`。权限问题在宿主机配置 udev，将对应 USB 和串口节点设为 `dialout` 组、权限 `0660`，重载后重新插拔。内置 JTAG 仅在内部 PHY 未被 OTG 占用时使用 `board/esp32s3-builtin.cfg`；NCM 固件调试需外部 JTAG。
